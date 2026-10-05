@@ -1,7 +1,35 @@
-# Easel
+<p align="center">
+  <img src="docs/icon.png" width="128" height="128" alt="Easel app icon">
+</p>
 
-A macOS menu bar app that rotates your desktop wallpaper through open-access
-artworks from the [National Gallery of Art](https://www.nga.gov/artworks/free-images-and-open-access) (CC0).
+<h1 align="center">Easel</h1>
+
+<p align="center">
+  <strong>A museum's worth of paintings, one desktop at a time.</strong><br>
+  Easel lives in your menu bar and rotates 20,000 public-domain works from the
+  <a href="https://www.nga.gov/artworks/free-images-and-open-access">National Gallery of Art</a>
+  as your wallpaper, fetched at full resolution for every screen.
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/macOS-13%2B-111?logo=apple&logoColor=white" alt="macOS 13+">
+  <img src="https://img.shields.io/badge/Apple%20Silicon%20%2B%20Intel-Universal-111" alt="Universal binary">
+  <img src="https://img.shields.io/badge/Swift-SwiftUI-F05138?logo=swift&logoColor=white" alt="Swift and SwiftUI">
+  <img src="https://img.shields.io/badge/code-MIT-3d7a5c" alt="MIT license">
+  <img src="https://img.shields.io/badge/artwork-CC0-c9a24b" alt="Artwork CC0">
+</p>
+
+<p align="center">
+  <img src="docs/hero.webp" alt="Three paintings from the collection" width="100%">
+  <br>
+  <sub>
+    <em>Wivenhoe Park, Essex</em>, John Constable, 1816 ·
+    <em>Farmhouse in Provence</em>, Vincent van Gogh, 1888 ·
+    <em>Watson and the Shark</em>, John Singleton Copley, 1778
+  </sub>
+</p>
+
+## Features
 
 - Rotates every 15 minutes, hour, 3 hours or day, and on wake
 - Same artwork everywhere, or different art on each display
