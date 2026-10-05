@@ -1,0 +1,205 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<title>Easel icon</title>
+<style>
+  body { margin: 0; background: #d8d8d8; display: grid; place-items: center; min-height: 100vh; }
+  canvas#out { width: 512px; height: 512px; }
+</style>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.170.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.170.0/examples/jsm/"
+} }
+</script>
+</head>
+<body>
+<canvas id="out" width="1024" height="1024"></canvas>
+<script type="module">
+// Renders the app icon: a 3D framed painting composited onto the macOS icon
+// shape. Query params: bg (green|cream|navy|oxblood), frame (gold|black|walnut),
+// save (filename to POST to serve.py's /save).
+import * as THREE from 'three';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+
+const params = new URLSearchParams(location.search);
+const SIZE = 1024;
+
+const BACKGROUNDS = {
+  green:   ['#3d7a5c', '#1c4434'],
+  cream:   ['#fbf8f2', '#e6dfd2'],
+  navy:    ['#2f4a7a', '#152544'],
+  oxblood: ['#9a2f37', '#561520'],
+};
+const FRAMES = {
+  gold:   { color: 0xd8a94f, metalness: 1, roughness: 0.18, clearcoat: 0 },
+  black:  { color: 0x141414, metalness: 0, roughness: 0.35, clearcoat: 1, clearcoatRoughness: 0.15 },
+  walnut: { color: 0x5a3a24, metalness: 0, roughness: 0.55, clearcoat: 0.6, clearcoatRoughness: 0.3 },
+};
+
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setPixelRatio(1);
+renderer.setSize(SIZE, SIZE);
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 0.85;
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.VSMShadowMap;
+
+const scene = new THREE.Scene();
+scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnvironment(), 0.04).texture;
+scene.environmentIntensity = 1.25;
+
+const camera = new THREE.PerspectiveCamera(20, 1, 0.1, 100);
+camera.position.set(0, 0, 19.5);
+
+function rect(w, h, r = 0) {
+  const s = new THREE.Shape();
+  const x = -w / 2, y = -h / 2;
+  s.moveTo(x + r, y);
+  s.lineTo(x + w - r, y); if (r) s.quadraticCurveTo(x + w, y, x + w, y + r);
+  s.lineTo(x + w, y + h - r); if (r) s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  s.lineTo(x + r, y + h); if (r) s.quadraticCurveTo(x, y + h, x, y + h - r);
+  s.lineTo(x, y + r); if (r) s.quadraticCurveTo(x, y, x + r, y);
+  return s;
+}
+
+function ring(outerW, outerH, innerW, innerH) {
+  const s = rect(outerW, outerH);
+  s.holes.push(rect(innerW, innerH));
+  return s;
+}
+
+const texture = await new THREE.TextureLoader().loadAsync('/Resources/icon-painting.jpg');
+texture.colorSpace = THREE.SRGBColorSpace;
+texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
+
+const art = new THREE.Group();
+
+// Frame moulding: three stepped rings (outer band, raised rounded profile,
+// thin inner lip) so light catches several edges.
+const W = 3.4, border = 0.42, depth = 0.22;
+const frameMaterial = new THREE.MeshPhysicalMaterial(FRAMES[params.get('frame') ?? 'gold']);
+const inner = W - border * 2;
+const steps = [
+  { outer: W,                inner: W - 0.22,           depth: 0.10, bevel: 0.03 },
+  { outer: W - 0.18,         inner: inner + 0.16,       depth: 0.22, bevel: 0.08 },
+  { outer: inner + 0.12,     inner: inner,              depth: 0.16, bevel: 0.02 },
+];
+for (const step of steps) {
+  const mesh = new THREE.Mesh(
+    new THREE.ExtrudeGeometry(ring(step.outer, step.outer, step.inner, step.inner), {
+      depth: step.depth, bevelEnabled: true, bevelThickness: step.bevel, bevelSize: step.bevel,
+      bevelSegments: 8, curveSegments: 4,
+    }),
+    frameMaterial,
+  );
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  art.add(mesh);
+}
+
+// Mat with a bevel-cut window.
+const matW = W - border * 2, windowW = matW * 0.66;
+const mat = new THREE.Mesh(
+  new THREE.ExtrudeGeometry(ring(matW, matW, windowW, windowW), {
+    depth: 0.03, bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.025, bevelSegments: 2,
+  }),
+  new THREE.MeshStandardMaterial({ color: 0xf6f2ea, roughness: 0.92 }),
+);
+mat.position.z = depth * 0.35;
+mat.receiveShadow = true;
+art.add(mat);
+
+const painting = new THREE.Mesh(
+  new THREE.PlaneGeometry(windowW + 0.06, windowW + 0.06),
+  new THREE.MeshStandardMaterial({ map: texture, roughness: 0.7 }),
+);
+painting.position.z = depth * 0.35 - 0.01;
+painting.receiveShadow = true;
+art.add(painting);
+
+// Backing so no gaps show through at an angle.
+const back = new THREE.Mesh(new THREE.PlaneGeometry(W, W), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+back.position.z = 0.01;
+art.add(back);
+
+art.rotation.set(0.08, -0.24, 0.0);
+art.position.set(0, 0.15, 0);
+scene.add(art);
+
+// Invisible wall that only catches the frame's shadow.
+const wall = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ opacity: 0.30 }));
+wall.position.z = -0.9;
+wall.receiveShadow = true;
+// scene.add(wall);  shadow is drawn from the render's silhouette instead
+
+const key = new THREE.DirectionalLight(0xfff4e6, 2.6);
+key.position.set(-4, 6, 8);
+key.castShadow = false;
+key.shadow.mapSize.set(2048, 2048);
+key.shadow.radius = 18;
+key.shadow.blurSamples = 25;
+Object.assign(key.shadow.camera, { left: -4, right: 4, top: 4, bottom: -4, near: 1, far: 30 });
+scene.add(key);
+const rim = new THREE.DirectionalLight(0xdfe8ff, 0.8);
+rim.position.set(5, -2, 4);
+scene.add(rim);
+
+renderer.render(scene, camera);
+
+// Composite onto the icon shape.
+const out = document.getElementById('out');
+const ctx = out.getContext('2d');
+const body = { x: 100, y: 100, s: 824, r: 185 };
+const shape = new Path2D();
+shape.roundRect(body.x, body.y, body.s, body.s, body.r);
+
+const [top, bottom] = BACKGROUNDS[params.get('bg') ?? 'green'];
+ctx.save();
+ctx.shadowColor = 'rgba(0,0,0,0.3)';
+ctx.shadowBlur = 28;
+ctx.shadowOffsetY = 12;
+ctx.fillStyle = bottom;
+ctx.fill(shape);
+ctx.restore();
+
+ctx.save();
+ctx.clip(shape);
+const g = ctx.createLinearGradient(0, body.y, 0, body.y + body.s);
+g.addColorStop(0, top);
+g.addColorStop(1, bottom);
+ctx.fillStyle = g;
+ctx.fillRect(0, 0, SIZE, SIZE);
+// Soft light from above
+const glow = ctx.createRadialGradient(512, 160, 0, 512, 160, 620);
+glow.addColorStop(0, 'rgba(255,255,255,0.22)');
+glow.addColorStop(1, 'rgba(255,255,255,0)');
+ctx.fillStyle = glow;
+ctx.fillRect(0, 0, SIZE, SIZE);
+// Soft cast shadow from the frame's silhouette, then the frame itself.
+ctx.save();
+ctx.shadowColor = 'rgba(10,20,15,0.45)';
+ctx.shadowBlur = 46;
+ctx.shadowOffsetX = 14;
+ctx.shadowOffsetY = 30;
+ctx.drawImage(renderer.domElement, 0, 0);
+ctx.restore();
+ctx.save();
+ctx.shadowColor = 'rgba(0,0,0,0.35)';
+ctx.shadowBlur = 8;
+ctx.shadowOffsetY = 4;
+ctx.drawImage(renderer.domElement, 0, 0);
+ctx.restore();
+ctx.restore();
+
+const save = params.get('save');
+if (save) {
+  const blob = await new Promise(resolve => out.toBlob(resolve, 'image/png'));
+  await fetch(`/save?name=${encodeURIComponent(save)}`, { method: 'POST', body: blob });
+}
+document.title = 'done';
+</script>
+</body>
+</html>
