@@ -39,3 +39,8 @@ and cached in `~/Library/Caches` (newest 20 kept).
 ## Not yet
 
 Developer ID signing and notarization, Sparkle updates, hosted manifest.
+
+## License
+
+Code is MIT (see `LICENSE`). Artwork images and collection data come from the
+National Gallery of Art's open access program and are CC0.
