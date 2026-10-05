@@ -5,7 +5,6 @@
 <h1 align="center">Easel</h1>
 
 <p align="center">
-  <strong>A museum's worth of paintings, one desktop at a time.</strong><br>
   Easel lives in your menu bar and rotates 20,000 public-domain works from the
   <a href="https://www.nga.gov/artworks/free-images-and-open-access">National Gallery of Art</a>
   as your wallpaper, fetched at full resolution for every screen.
