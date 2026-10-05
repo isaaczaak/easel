@@ -1,0 +1,7 @@
+.build/
+build/
+.data/
+.DS_Store
+.claude/
+icon/out/
+__pycache__/
