@@ -38,9 +38,23 @@
 - Favorites, previous/next, launch at login
 - Universal binary (Apple Silicon + Intel), macOS 13+
 
-## Build & install (this Mac)
+## Install
 
-    scripts/bundle.sh --install    # → /Applications/Easel.app (ad-hoc signed)
+Requires macOS 13 or later and Apple's command line tools
+(`xcode-select --install`, which includes Swift).
+
+```bash
+git clone https://github.com/isaaczaak/easel.git
+cd easel
+scripts/bundle.sh --install
+```
+
+This builds Easel, copies it to `/Applications` and launches it. It appears in
+your menu bar and starts at login. Because you built it yourself, macOS opens
+it without a security warning.
+
+To update, run `git pull` and `scripts/bundle.sh --install` again. To remove
+it, quit Easel from its menu and delete `/Applications/Easel.app`.
 
 ## Refresh the artwork list
 
