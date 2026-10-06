@@ -45,6 +45,17 @@ final class WallpaperController: ObservableObject {
     @Published var palettes: Set<String> {
         didSet { defaults.set(Array(palettes), forKey: Keys.palettes); upNext = [] }
     }
+    @Published var hideNudity: Bool {
+        didSet {
+            defaults.set(hideNudity, forKey: Keys.hideNudity)
+            upNext = []
+            // Swap out anything now hidden that's on screen.
+            if hideNudity, current.contains(where: { $0.artwork.nude == true }) {
+                position = max(history.count - 1, 0)
+                next()
+            }
+        }
+    }
     @Published var favoritesOnly: Bool {
         didSet { defaults.set(favoritesOnly, forKey: Keys.favoritesOnly); upNext = [] }
     }
@@ -66,7 +77,7 @@ final class WallpaperController: ObservableObject {
     private enum Keys {
         static let interval = "interval", kinds = "kinds", favoritesOnly = "favoritesOnly"
         static let perDisplay = "perDisplay", paused = "paused", favorites = "favorites"
-        static let palettes = "palettes"
+        static let palettes = "palettes", hideNudity = "hideNudity"
         static let frames = "frames", position = "position", lastChange = "lastChange"
         static let launchAtLogin = "launchAtLogin"
     }
@@ -105,6 +116,7 @@ final class WallpaperController: ObservableObject {
         interval = RotationInterval(rawValue: defaults.integer(forKey: Keys.interval)) ?? .hour
         enabledKinds = Set(defaults.stringArray(forKey: Keys.kinds) ?? [ArtKind.painting.rawValue])
         palettes = Set(defaults.stringArray(forKey: Keys.palettes) ?? [])
+        hideNudity = defaults.object(forKey: Keys.hideNudity) as? Bool ?? true
         favoritesOnly = defaults.bool(forKey: Keys.favoritesOnly)
         perDisplay = defaults.bool(forKey: Keys.perDisplay)
         paused = defaults.bool(forKey: Keys.paused)
@@ -323,6 +335,7 @@ final class WallpaperController: ObservableObject {
             enabledKinds.contains($0.kind)
                 && (!favoritesOnly || favorites.contains($0.id))
                 && (palettes.isEmpty || !palettes.isDisjoint(with: $0.palette ?? []))
+                && !(hideNudity && $0.nude == true)
         }
         var picks = Array(pool.filter { !recent.contains($0.id) }.shuffled().prefix(count))
         if picks.count < count {

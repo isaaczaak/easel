@@ -22,6 +22,7 @@ IIIF_PREFIX = "https://api.nga.gov/iiif/"
 
 MIN_ASPECT = 1.2  # width / height; screens are ~1.6, the app crops the rest
 MIN_WIDTH = 2000  # px; anything smaller looks soft on a Retina display
+NUDITY_THRESHOLD = 0.5  # CLIP score from scripts/detect_nudity.py
 # Classifications the app can show (ArtKind in Artwork.swift).
 KINDS = {"painting", "drawing", "print", "photograph", "sculpture"}
 
@@ -94,6 +95,23 @@ def main():
             if artwork["id"] in colors:
                 artwork["palette"] = colors[artwork["id"]]
 
+    # Nudity: NGA's own keywords, plus CLIP scores (which catch the paintings
+    # NGA didn't tag). Only flagged artworks carry the field.
+    nude_objects = set()
+    with open(fetch(args.data_dir, "objects_terms.csv"), encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            term = row["term"].lower()
+            if row["termtype"] in ("Keyword", "Theme") and ("nude" in term or "naked" in term):
+                nude_objects.add(int(row["objectid"]))
+    scores = {}
+    nudity_path = os.path.join(args.data_dir, "nudity.json")
+    if os.path.exists(nudity_path):
+        with open(nudity_path, encoding="utf-8") as f:
+            scores = json.load(f)
+    for artwork in artworks:
+        if artwork["oid"] in nude_objects or scores.get(artwork["id"], 0) >= NUDITY_THRESHOLD:
+            artwork["nude"] = True
+
     artworks.sort(key=lambda a: a["oid"])
     with open(args.out, "w", encoding="utf-8") as f:
         json.dump({"version": 1, "artworks": artworks}, f, ensure_ascii=False, separators=(",", ":"))
@@ -106,6 +124,8 @@ def main():
     palettes = collections.Counter(tag for a in artworks for tag in a.get("palette", []))
     if palettes:
         print("palette tags: " + ", ".join(f"{tag} {n}" for tag, n in palettes.most_common()))
+    nude = collections.Counter(a["kind"] for a in artworks if a.get("nude"))
+    print(f"flagged nude: {sum(nude.values())} (" + ", ".join(f"{k} {n}" for k, n in nude.most_common()) + ")")
 
 
 if __name__ == "__main__":

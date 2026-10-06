@@ -34,6 +34,7 @@
 - Same artwork everywhere, or different art on each display
 - Filter by kind (paintings, drawings, prints, photographs, sculpture) and by
   dominant color
+- Hide nudity (on by default), using NGA's tags plus CLIP image analysis
 - Favorites, previous/next, launch at login
 - Universal binary (Apple Silicon + Intel), macOS 13+
 
@@ -45,6 +46,10 @@
 
     scripts/build_manifest.py      # NGA CSVs → Resources/manifest.json
     scripts/analyze_colors.py      # color tags (cached in .data/colors.json), then rebuilds
+
+    # Nudity scores with CLIP (cached in .data/nudity.json), then rebuilds
+    python3 -m venv .data/venv && .data/venv/bin/pip install torch open_clip_torch pillow
+    .data/venv/bin/python scripts/detect_nudity.py
 
 The manifest keeps open-access, primary-view, landscape images at least
 2000px wide. Images are fetched at screen resolution from NGA's IIIF server

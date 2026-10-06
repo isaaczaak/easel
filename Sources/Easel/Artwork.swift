@@ -11,6 +11,8 @@ struct Artwork: Codable, Identifiable, Hashable {
     let kind: String
     /// Dominant colors from scripts/analyze_colors.py (PaletteColor raw values).
     let palette: [String]?
+    /// Flagged by NGA's keywords or the CLIP pass in scripts/detect_nudity.py.
+    let nude: Bool?
 
     /// NGA's artwork page. The legacy URL redirects to the current slugged page.
     var pageURL: URL {

@@ -130,6 +130,12 @@ private struct ArtworkSettings: View {
                     .foregroundStyle(.secondary)
             }
             Section {
+                Toggle("Hide nudity", isOn: $controller.hideNudity)
+            } footer: {
+                Text("Uses the gallery's own tags plus image analysis. It catches most, but not every, artwork with nudity.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
                 Toggle("Favorites only", isOn: $controller.favoritesOnly)
             } footer: {
                 Text("Artwork from the [National Gallery of Art's open access collection](https://www.nga.gov/artworks/free-images-and-open-access), released under CC0.")
