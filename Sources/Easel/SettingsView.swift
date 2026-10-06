@@ -132,7 +132,7 @@ private struct ArtworkSettings: View {
             Section {
                 Toggle("Hide nudity", isOn: $controller.hideNudity)
             } footer: {
-                Text("Some artworks with nudity may still appear.")
+                Text("Hides artworks the gallery tags as nude, plus others flagged by image analysis. Some nudity may still appear, and a few artworks without it may be hidden.")
                     .foregroundStyle(.secondary)
             }
             Section {
