@@ -20,7 +20,8 @@
 </p>
 
 <p align="center">
-  Made by <a href="https://x.com/isaaccyn">Isaac Ng</a>
+  <a href="https://github.com/isaaczaak/opengallery/releases/latest"><b>Download for macOS</b></a>
+  · Made by <a href="https://x.com/isaaccyn">Isaac Ng</a>
 </p>
 
 <p align="center">
@@ -39,8 +40,9 @@
 every 15 minutes, 3 hours or day, and show the same artwork on every display
 or different art on each.
 
-**Filters:** Choose artwork by type, art movement and palette. OpenGallery
-hides nudity by default, using the Gallery's own tags and image analysis.
+**Filters:** Choose artwork by type, orientation, art movement and palette.
+OpenGallery hides nudity by default, using the Gallery's own tags and image
+analysis.
 
 **Desktop gestures:** Swipe sideways with two fingers to see the next or
 previous artwork. Force Click to see the artwork's title, artist, date and
@@ -61,7 +63,7 @@ your screen.
 **Storage:** About 60 MB in `~/Library/Caches`, which macOS can clear when it
 needs space.
 
-**Memory:** Around 45 MB.
+**Memory:** About 50 MB.
 
 **Privacy:** OpenGallery only connects to the National Gallery of Art's image
 server and collects no data about you. Force Click reads trackpad pressure on
@@ -78,8 +80,8 @@ the desktop and nothing else.
    first time. Go to System Settings → Privacy & Security, scroll down and
    click **Open Anyway**.
 
-Look for its icon in your menu bar. To update, quit OpenGallery from its menu
-and replace the app with the new version.
+To update, quit OpenGallery from its menu and replace the app with the new
+version.
 
 ### Build from source
 
@@ -98,7 +100,9 @@ update, run `git pull` and `scripts/bundle.sh --install` again.
 
 ### After installing
 
-OpenGallery starts at login. You can turn that off in its Settings.
+OpenGallery lives in your menu bar, with a small frame icon. Click it to see
+what's on each screen, change the artwork, or open Settings. It starts at
+login; you can turn that off in Settings.
 
 **Force Click** is off by default. Turn it on in OpenGallery's Settings, then
 allow OpenGallery when macOS asks for Input Monitoring. macOS ties this
@@ -169,7 +173,7 @@ python3 -m venv .data/venv && .data/venv/bin/pip install torch open_clip_torch p
 
 `bundle.sh` compresses the list into the app, and the app unpacks it at
 launch. OpenGallery downloads each image at your screen's resolution from the
-Gallery's IIIF server and keeps the newest 20 in `~/Library/Caches`.
+Gallery's IIIF server and keeps the newest 30 in `~/Library/Caches`.
 
 ### App icon
 
@@ -182,14 +186,6 @@ Gallery's IIIF server and keeps the newest 20 in `~/Library/Caches`.
 - `Sources/OpenGallery/`: the SwiftUI menu bar app and Settings window
 - `scripts/`: artwork list, icon, signing and build scripts
 - `Resources/`: the artwork list and icon bundled into the app
-
-### Releases
-
-Write what's new in `docs/releases/v0.3.0.md`, then run
-`scripts/release.sh 0.3.0` from an up-to-date `main` with nothing uncommitted.
-It builds the app, zips it and publishes it on GitHub Releases, adding install
-steps after your changelog. `--notes-only` rewrites an existing release's
-notes. Releases are signed ad hoc; notarizing them needs an Apple Developer ID.
 
 ### Signing
 
