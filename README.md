@@ -35,13 +35,12 @@
 
 ## Features
 
-**Rotation:** OpenGallery changes the artwork every hour. You can switch to
-every 15 minutes, 3 hours or day, and show the same artwork on every display
-or different art on each.
+**Rotation:** Changes the artwork every hour, or every 15 minutes, 3 hours or
+day. Show the same artwork on every display or different art on each.
 
 **Filters:** Choose artwork by type, orientation, art movement and palette.
-OpenGallery hides nudity by default, using the National Gallery of Art's own
-tags and image analysis.
+Nudity is hidden by default, using the National Gallery of Art's own tags and
+image analysis.
 
 **Desktop gestures:** Swipe sideways with two fingers to see the next or
 previous artwork. Force Click to see the artwork's title, artist, date and
@@ -49,15 +48,14 @@ medium.
 
 **Favorites:** Save up to 20 favorites, and show only those if you like.
 
-**On/off:** Switch OpenGallery off from its menu to revert to your system
-wallpaper.
+**On/off:** Switch it off from the menu to revert to your system wallpaper.
 
 **Offline:** Keeps rotating through artwork it has already downloaded.
 
 **Small cache:** Keeps only the 15 most recent images and deletes older ones
-as it goes, so it never grows past about 25–35 MB, depending on your screens.
+as it goes, so it never grows past about 25–50 MB, depending on your screens.
 
-OpenGallery runs on Apple Silicon and Intel Macs with macOS 13 or later.
+Runs on Apple Silicon and Intel Macs with macOS 13 or later.
 
 ## Privacy
 
@@ -156,7 +154,7 @@ Quit OpenGallery from its menu, then drag it from Applications to the Trash.
 **Downloads:** Each image downloads only when it's about to show, sized for
 your screen.
 
-**Storage:** The 15 most recent images, about 25–35 MB depending on your
+**Storage:** The 15 most recent images, about 25–50 MB depending on your
 screens, in `~/Library/Caches`, which macOS can clear when it needs space.
 
 **Memory:** About 50 MB.
