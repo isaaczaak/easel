@@ -1,0 +1,95 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 420" width="880" height="420" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+  <title>How OpenGallery works</title>
+  <style>
+    .panel { fill: #F6F2EB; stroke: #E4DCCF; }
+    .node { fill: #FFFFFF; stroke: #D8CFC1; }
+    .accent { fill: #2B2722; stroke: #2B2722; }
+    .title { fill: #2B2722; font-size: 15px; font-weight: 600; }
+    .sub { fill: #857C70; font-size: 12.5px; }
+    .accent-title { fill: #FBF8F3; font-size: 15px; font-weight: 600; }
+    .accent-sub { fill: #CFC6B8; font-size: 12.5px; }
+    .label { fill: #857C70; font-size: 11.5px; font-weight: 600; letter-spacing: 0.08em; }
+    .edge { stroke: #A79D8F; stroke-width: 1.6; fill: none; }
+    .edge-soft { stroke: #A79D8F; stroke-width: 1.6; fill: none; stroke-dasharray: 4 4; }
+    .head { fill: #A79D8F; }
+    @media (prefers-color-scheme: dark) {
+      .panel { fill: #1F1D1A; stroke: #36322C; }
+      .node { fill: #2A2724; stroke: #45403A; }
+      .accent { fill: #EDE6DA; stroke: #EDE6DA; }
+      .title { fill: #EEE8DF; }
+      .sub { fill: #A39A8E; }
+      .accent-title { fill: #1F1D1A; }
+      .accent-sub { fill: #6F675C; }
+      .label { fill: #A39A8E; }
+      .edge, .edge-soft { stroke: #7E766B; }
+      .head { fill: #7E766B; }
+    }
+  </style>
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path class="head" d="M0 0 L10 5 L0 10 z"/>
+    </marker>
+  </defs>
+
+  <!-- Build time -->
+  <rect class="panel" x="16" y="16" width="232" height="388" rx="18"/>
+  <text class="label" x="40" y="48">BUILD TIME</text>
+
+  <rect class="node" x="40" y="68" width="184" height="68" rx="12"/>
+  <text class="title" x="60" y="98">NGA open data</text>
+  <text class="sub" x="60" y="119">130,000 artworks, CC0</text>
+
+  <rect class="node" x="40" y="176" width="184" height="68" rx="12"/>
+  <text class="title" x="60" y="206">Artwork scripts</text>
+  <text class="sub" x="60" y="227">Tags, colours, nudity</text>
+
+  <rect class="node" x="40" y="284" width="184" height="68" rx="12"/>
+  <text class="title" x="60" y="314">Packed catalog</text>
+  <text class="sub" x="60" y="335">60,000 works, 2.8 MB</text>
+
+  <path class="edge" d="M132 136 V170" marker-end="url(#arrow)"/>
+  <path class="edge" d="M132 244 V278" marker-end="url(#arrow)"/>
+
+  <!-- On your Mac -->
+  <rect class="panel" x="272" y="16" width="592" height="388" rx="18"/>
+  <text class="label" x="296" y="48">ON YOUR MAC</text>
+
+  <!-- Inputs -->
+  <rect class="node" x="296" y="68" width="160" height="68" rx="12"/>
+  <text class="title" x="316" y="98">Swipe</text>
+  <text class="sub" x="316" y="119">Two fingers, desktop</text>
+
+  <rect class="node" x="296" y="284" width="160" height="68" rx="12"/>
+  <text class="title" x="316" y="314">Force Click</text>
+  <text class="sub" x="316" y="335">Press on the desktop</text>
+
+  <!-- Main flow -->
+  <rect class="node" x="296" y="176" width="160" height="68" rx="12"/>
+  <text class="title" x="316" y="206">Pick artwork</text>
+  <text class="sub" x="316" y="227">Filters, history</text>
+
+  <rect class="node" x="488" y="176" width="176" height="68" rx="12"/>
+  <text class="title" x="508" y="206">Download &amp; cache</text>
+  <text class="sub" x="508" y="227">Gallery wall for portraits</text>
+
+  <rect class="accent" x="696" y="176" width="144" height="68" rx="12"/>
+  <text class="accent-title" x="716" y="206">Wallpaper</text>
+  <text class="accent-sub" x="716" y="227">Every screen</text>
+
+  <rect class="node" x="488" y="284" width="176" height="68" rx="12"/>
+  <text class="title" x="508" y="314">Details card</text>
+  <text class="sub" x="508" y="335">Title, artist, medium</text>
+
+  <rect class="node" x="488" y="68" width="176" height="68" rx="12"/>
+  <text class="title" x="508" y="98">NGA image server</text>
+  <text class="sub" x="508" y="119">Sized for your screen</text>
+
+  <!-- Edges -->
+  <path class="edge" d="M224 318 H260 V210 H290" marker-end="url(#arrow)"/>
+  <path class="edge-soft" d="M260 318 V372 H576 V358" marker-end="url(#arrow)"/>
+  <path class="edge" d="M376 136 V170" marker-end="url(#arrow)"/>
+  <path class="edge" d="M456 210 H482" marker-end="url(#arrow)"/>
+  <path class="edge" d="M664 210 H690" marker-end="url(#arrow)"/>
+  <path class="edge" d="M576 136 V170" marker-end="url(#arrow)"/>
+  <path class="edge" d="M456 318 H482" marker-end="url(#arrow)"/>
+</svg>

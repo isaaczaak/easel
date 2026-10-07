@@ -137,22 +137,9 @@ Don't use sudo, and don't change any other system or privacy settings.
 
 ## Development
 
-```mermaid
-flowchart LR
-    subgraph build["Build time"]
-        data["NGA open data"] --> scripts["Artwork list scripts<br>tags, colors, nudity"]
-        scripts --> catalog["Packed catalog"]
-    end
-    subgraph app["OpenGallery"]
-        catalog --> pick["Pick an artwork<br>filters, history"]
-        pick --> cache["Download and cache<br>gallery wall for portraits"]
-        cache --> wallpaper["Desktop wallpaper"]
-        swipe["Swipe"] --> pick
-        force["Force Click"] --> card["Details card"]
-        catalog --> card
-    end
-    iiif["NGA image server"] --> cache
-```
+<p align="center">
+  <img src="docs/architecture.svg" alt="How OpenGallery works: the build scripts turn NGA open data into a packed catalog; on your Mac, OpenGallery picks artwork, downloads it from the NGA image server and sets the wallpaper, with swipe and Force Click on the desktop" width="100%">
+</p>
 
 ### Artwork list
 
@@ -174,12 +161,6 @@ python3 -m venv .data/venv && .data/venv/bin/pip install torch open_clip_torch p
 `bundle.sh` compresses the list into the app, and the app unpacks it at
 launch. OpenGallery downloads each image at your screen's resolution from the
 Gallery's IIIF server and keeps the newest 30 in `~/Library/Caches`.
-
-### App icon
-
-`swift scripts/make_icon.swift` draws the icon and writes
-`Resources/AppIcon.icns`. `icon/` holds earlier design explorations; run
-`icon/serve.py` and open http://localhost:8765/icon/index.html to view them.
 
 ### Layout
 
