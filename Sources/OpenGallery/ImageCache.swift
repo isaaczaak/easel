@@ -3,9 +3,9 @@ import Foundation
 /// Downloads artwork images into ~/Library/Caches and keeps the newest few.
 final class ImageCache {
     private let directory: URL
-    /// How many downloaded images to keep: enough for a few ready ahead and
-    /// recent history on two displays.
-    private let limit = 30
+    /// How many downloaded images to keep: the current, next three and one
+    /// back for two displays, plus a little recent history.
+    private let limit = 15
 
     /// Where downloaded artwork lives.
     static var directory: URL {

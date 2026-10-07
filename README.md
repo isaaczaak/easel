@@ -54,8 +54,8 @@ wallpaper.
 
 **Offline:** Keeps rotating through artwork it has already downloaded.
 
-**Small cache:** Keeps only the 30 most recent images and deletes older ones
-as it goes, so it never grows past about 50–100 MB, depending on your screens.
+**Small cache:** Keeps only the 15 most recent images and deletes older ones
+as it goes, so it never grows past about 25–35 MB, depending on your screens.
 
 OpenGallery runs on Apple Silicon and Intel Macs with macOS 13 or later.
 
@@ -141,8 +141,9 @@ allow OpenGallery when macOS asks for Input Monitoring. macOS ties this
 permission to each version, so allow it again if Force Click stops working
 after an update.
 
-**To uninstall**, quit OpenGallery from its menu and delete
-`/Applications/OpenGallery.app`.
+### Uninstall
+
+Quit OpenGallery from its menu, then drag it from Applications to the Trash.
 
 ## Development
 
@@ -155,7 +156,7 @@ after an update.
 **Downloads:** Each image downloads only when it's about to show, sized for
 your screen.
 
-**Storage:** The 30 most recent images, about 50–100 MB depending on your
+**Storage:** The 15 most recent images, about 25–35 MB depending on your
 screens, in `~/Library/Caches`, which macOS can clear when it needs space.
 
 **Memory:** About 50 MB.
