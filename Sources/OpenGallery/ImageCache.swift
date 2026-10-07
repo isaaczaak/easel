@@ -3,7 +3,8 @@ import Foundation
 /// Downloads artwork images into ~/Library/Caches and keeps the newest few.
 final class ImageCache {
     private let directory: URL
-    private let limit: Int
+    /// How many downloaded images to keep.
+    private let limit = 20
 
     /// Where downloaded artwork lives.
     static var directory: URL {
@@ -11,9 +12,8 @@ final class ImageCache {
         return caches.appendingPathComponent(Bundle.main.bundleIdentifier ?? "OpenGallery", isDirectory: true)
     }
 
-    init(limit: Int = 20) {
+    init() {
         directory = Self.directory
-        self.limit = limit
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }
 

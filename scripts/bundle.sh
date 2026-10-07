@@ -39,16 +39,21 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 </plist>
 PLIST
 
-# Ad-hoc signature: fine for running on this Mac. Distribution needs a
-# Developer ID signature and notarization instead.
-codesign --force --sign - --options runtime "$APP"
+# Sign with the local certificate from scripts/make_signing_cert.sh when it
+# exists, so privacy permissions survive rebuilds; otherwise ad-hoc, which
+# is fine for running on this Mac. Distribution needs a Developer ID
+# signature and notarization instead.
+SIGN_ID="OpenGallery Local Signing"
+if ! security find-identity -v -p codesigning | grep -q "$SIGN_ID"; then
+    SIGN_ID="-"
+fi
+codesign --force --sign "$SIGN_ID" --options runtime "$APP"
 
 echo "Built $APP ($(du -sh "$APP" | cut -f1)) — $(lipo -archs "$APP/Contents/MacOS/$APP_NAME")"
 
 if [ "${1:-}" = "--install" ]; then
     pkill -x "$APP_NAME" 2>/dev/null || true
-    pkill -x Easel 2>/dev/null || true  # the app's old name
-    rm -rf "/Applications/$APP_NAME.app" /Applications/Easel.app
+    rm -rf "/Applications/$APP_NAME.app"
     cp -R "$APP" /Applications/
     open "/Applications/$APP_NAME.app"
     echo "Installed and launched /Applications/$APP_NAME.app"

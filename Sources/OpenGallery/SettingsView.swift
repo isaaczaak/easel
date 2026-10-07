@@ -51,6 +51,8 @@ struct SettingsView: View {
                 .tabItem { Label("General", systemImage: "gearshape") }
             ArtworkSettings(controller: controller)
                 .tabItem { Label("Artwork", systemImage: "photo.artframe") }
+            FavoritesSettings(controller: controller)
+                .tabItem { Label("Favorites", systemImage: "heart") }
         }
         .frame(width: 460)
     }
@@ -66,13 +68,18 @@ private struct GeneralSettings: View {
                     ForEach(RotationInterval.allCases) { Text($0.label).tag($0) }
                 }
                 Toggle("Different art on each display", isOn: $controller.perDisplay)
+            } header: {
+                Text("Rotation")
             } footer: {
                 Text("OpenGallery also changes the artwork when your Mac wakes, if the interval has passed.")
                     .foregroundStyle(.secondary)
             }
             Section {
                 Toggle("Swipe to change artwork", isOn: $controller.swipeEnabled)
-                Toggle("Force Click for artwork details", isOn: $controller.forceClickEnabled)
+                Toggle(isOn: $controller.forceClickEnabled) {
+                    Text("Force Click for artwork details")
+                    Text("Requires Input Monitoring access in Privacy & Security settings")
+                }
                 if controller.forceClickEnabled {
                     InputMonitoringStatus()
                 }
@@ -88,8 +95,7 @@ private struct GeneralSettings: View {
                     set: { controller.setLaunchAtLogin($0) }
                 ))
             } footer: {
-                Text("Public domain artwork ([CC0](https://www.nga.gov/artworks/free-images-and-open-access)), courtesy National Gallery of Art, Washington. OpenGallery isn't affiliated with the Gallery.")
-                    .foregroundStyle(.secondary)
+                CreditFooter()
             }
         }
         .formStyle(.grouped)
@@ -104,7 +110,7 @@ private struct ArtworkSettings: View {
 
     var body: some View {
         Form {
-            Section("Show") {
+            Section("Type") {
                 Toggle("All kinds", isOn: Binding(
                     get: { controller.showsAllKinds },
                     set: { controller.setAllKinds($0) }
@@ -118,6 +124,12 @@ private struct ArtworkSettings: View {
                         .toggleStyle(.checkbox)
                     }
                 }
+            }
+            Section {
+                MovementPicker(controller: controller)
+            } footer: {
+                Text("Only some works are tagged with a movement, so choosing one narrows the selection.")
+                    .foregroundStyle(.secondary)
             }
             Section {
                 Toggle("Any color", isOn: Binding(
@@ -147,15 +159,65 @@ private struct ArtworkSettings: View {
             Section {
                 Toggle("Hide nudity", isOn: $controller.hideNudity)
             } footer: {
-                Text("Hides artworks the gallery tags as nude, plus others flagged by image analysis. Some nudity may still appear.")
-                    .foregroundStyle(.secondary)
+                VStack(alignment: .leading, spacing: 12) {
+                    Text("Hides artworks the gallery tags as nude, plus others flagged by image analysis. Some nudity may still appear.")
+                        .foregroundStyle(.secondary)
+                    CreditFooter()
+                }
             }
+        }
+        .formStyle(.grouped)
+        .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// One row with a drop-down of movements to tick, instead of a long grid.
+private struct MovementPicker: View {
+    @ObservedObject var controller: WallpaperController
+
+    private var summary: String {
+        let chosen = ArtMovement.allCases.filter { controller.movements.contains($0.rawValue) }
+        switch chosen.count {
+        case 0: return "Any"
+        case 1: return chosen[0].rawValue
+        default: return "\(chosen.count) movements"
+        }
+    }
+
+    var body: some View {
+        LabeledContent("Art movement") {
+            Menu(summary) {
+                Toggle("Any", isOn: Binding(
+                    get: { controller.movements.isEmpty },
+                    set: { if $0 { controller.movements = [] } }
+                ))
+                Divider()
+                let counts = controller.movementCounts
+                ForEach(ArtMovement.allCases) { movement in
+                    Toggle("\(movement.rawValue)  (\(counts[movement.rawValue, default: 0]))", isOn: Binding(
+                        get: { controller.movements.contains(movement.rawValue) },
+                        set: { controller.setMovement(movement, enabled: $0) }
+                    ))
+                }
+            }
+            .fixedSize()
+        }
+    }
+}
+
+private struct FavoritesSettings: View {
+    @ObservedObject var controller: WallpaperController
+
+    var body: some View {
+        Form {
             Section {
                 Toggle("Favorites only", isOn: $controller.favoritesOnly)
                     .disabled(controller.favorites.isEmpty && !controller.favoritesOnly)
                 FavoritesList(controller: controller)
             } header: {
                 Text("Favorites (\(controller.favorites.count) of \(WallpaperController.favoritesLimit))")
+            } footer: {
+                CreditFooter()
             }
         }
         .formStyle(.grouped)
@@ -243,4 +305,21 @@ private struct InputMonitoringStatus: View {
         }
         .onReceive(refresh) { _ in granted = CGPreflightListenEventAccess() }
     }
+}
+
+/// The Gallery's suggested credit, shown at the bottom of each tab.
+private struct CreditFooter: View {
+    var body: some View {
+        Text(Self.text)
+            .foregroundStyle(.secondary)
+    }
+
+    /// Built as an attributed string so the link keeps the policy URL exactly.
+    private static let text: AttributedString = {
+        var text = AttributedString("Public domain artwork (CC0), courtesy National Gallery of Art, Washington. OpenGallery isn't affiliated with the Gallery.")
+        if let range = text.range(of: "CC0") {
+            text[range].link = Artwork.openAccessPolicy
+        }
+        return text
+    }()
 }

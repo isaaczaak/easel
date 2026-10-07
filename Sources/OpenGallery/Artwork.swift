@@ -17,6 +17,11 @@ struct Artwork: Codable, Identifiable, Hashable {
     let medium: String?
     /// The lead artist's nationality and life dates, e.g. "American, 1796 - 1872".
     let bio: String?
+    /// NGA's movement tags (ArtMovement raw values); most works have none.
+    let movements: [String]?
+
+    /// NGA's open access policy, which releases these images under CC0.
+    static let openAccessPolicy = URL(string: "https://www.nga.gov/terms-and-notices#open-access")!
 
     /// NGA's artwork page. The legacy URL redirects to the current slugged page.
     var pageURL: URL {
@@ -67,7 +72,8 @@ struct Manifest: Codable {
             NSLog("OpenGallery: bundled manifest missing or invalid")
             return Manifest(version: 0, artworks: [])
         }
-        return manifest
+        // Ids become file names and URL paths, so allow only UUIDs.
+        return Manifest(version: manifest.version, artworks: manifest.artworks.filter { UUID(uuidString: $0.id) != nil })
     }
 }
 
@@ -80,6 +86,15 @@ enum ArtKind: String, CaseIterable, Identifiable {
 }
 
 /// Dominant-color filters, in menu order.
+/// Art movements, in historical order. Raw values are NGA's style terms.
+enum ArtMovement: String, CaseIterable, Identifiable {
+    case renaissance = "Renaissance", baroque = "Baroque", rococo = "Rococo"
+    case neoclassic = "Neoclassic", romantic = "Romantic", realist = "Realist"
+    case impressionist = "Impressionist", postImpressionist = "Post-Impressionist", naive = "Naive"
+
+    var id: String { rawValue }
+}
+
 enum PaletteColor: String, CaseIterable, Identifiable {
     case red, orange, yellow, green, blue, purple, brown, mono
 

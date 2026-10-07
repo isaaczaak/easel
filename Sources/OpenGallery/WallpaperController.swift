@@ -1,4 +1,5 @@
 import AppKit
+import Combine
 import ServiceManagement
 
 enum RotationInterval: Int, CaseIterable, Identifiable {
@@ -51,6 +52,10 @@ final class WallpaperController: ObservableObject {
     /// Selected palette colors; empty means any color.
     @Published var palettes: Set<String> {
         didSet { defaults.set(Array(palettes), forKey: Keys.palettes); upNext = [:] }
+    }
+    /// Selected art movements; empty means any (including untagged works).
+    @Published var movements: Set<String> {
+        didSet { defaults.set(Array(movements), forKey: Keys.movements); upNext = [:] }
     }
     @Published var hideNudity: Bool {
         didSet {
@@ -114,13 +119,11 @@ final class WallpaperController: ObservableObject {
     private enum Keys {
         static let interval = "interval", kinds = "kinds", favoritesOnly = "favoritesOnly"
         static let perDisplay = "perDisplay", paused = "paused", favorites = "favorites"
-        static let palettes = "palettes", hideNudity = "hideNudity"
+        static let palettes = "palettes", hideNudity = "hideNudity", movements = "movements"
         static let tracks = "tracks", positions = "trackPositions", lastChange = "lastChange"
         static let launchAtLogin = "launchAtLogin", swipeEnabled = "swipeEnabled"
         static let forceClickEnabled = "forceClickEnabled", isOn = "isOn"
         static let systemWallpapers = "systemWallpapers"
-        // Before per-screen history: frames of ids shown together.
-        static let frames = "frames", position = "position"
     }
 
     private static let historyLimit = 50
@@ -145,11 +148,16 @@ final class WallpaperController: ObservableObject {
     private var loadTask: Task<Void, Never>?
     private var timer: Timer?
 
+    /// `setting` combined with the on/off switch: a desktop feature is
+    /// active only while both are on.
+    func whileOn(_ setting: Published<Bool>.Publisher) -> AnyPublisher<Bool, Never> {
+        setting.combineLatest($isOn).map { $0 && $1 }.removeDuplicates().eraseToAnyPublisher()
+    }
+
     /// Whether `previous()` has anywhere to go, on every screen or one.
     func canGoBack(screen: Int? = nil) -> Bool {
         trackIndices(for: screen).contains { positions[$0] > 0 }
     }
-    var canGoBack: Bool { canGoBack() }
 
     init() {
         let artworks = Manifest.loadBundled().artworks
@@ -160,24 +168,19 @@ final class WallpaperController: ObservableObject {
         interval = RotationInterval(rawValue: defaults.integer(forKey: Keys.interval)) ?? .hour
         enabledKinds = Set(defaults.stringArray(forKey: Keys.kinds) ?? [ArtKind.painting.rawValue])
         palettes = Set(defaults.stringArray(forKey: Keys.palettes) ?? [])
+        movements = Set(defaults.stringArray(forKey: Keys.movements) ?? [])
         hideNudity = defaults.object(forKey: Keys.hideNudity) as? Bool ?? true
         favoritesOnly = defaults.bool(forKey: Keys.favoritesOnly)
         perDisplay = defaults.bool(forKey: Keys.perDisplay)
         paused = defaults.bool(forKey: Keys.paused)
         swipeEnabled = defaults.object(forKey: Keys.swipeEnabled) as? Bool ?? true
-        forceClickEnabled = defaults.object(forKey: Keys.forceClickEnabled) as? Bool ?? true
+        // Off until chosen: it needs Input Monitoring, a sensitive permission.
+        forceClickEnabled = defaults.object(forKey: Keys.forceClickEnabled) as? Bool ?? false
         isOn = defaults.object(forKey: Keys.isOn) as? Bool ?? true
         favorites = defaults.stringArray(forKey: Keys.favorites) ?? []
 
-        var tracks = (defaults.array(forKey: Keys.tracks) as? [[String]]) ?? []
-        var positions = (defaults.array(forKey: Keys.positions) as? [Int]) ?? []
-        if tracks.isEmpty, let frames = defaults.array(forKey: Keys.frames) as? [[String]], !frames.isEmpty {
-            // Split the old shared frames into one track per screen.
-            let width = frames.map(\.count).max() ?? 1
-            tracks = (0..<width).map { slot in frames.compactMap { $0.isEmpty ? nil : $0[slot % $0.count] } }
-            positions = Array(repeating: defaults.integer(forKey: Keys.position), count: width)
-        }
-        tracks = tracks.map { $0.filter { byID[$0] != nil } }
+        let tracks = ((defaults.array(forKey: Keys.tracks) as? [[String]]) ?? []).map { $0.filter { byID[$0] != nil } }
+        let positions = (defaults.array(forKey: Keys.positions) as? [Int]) ?? []
         self.positions = tracks.indices.map { index in
             min(positions.indices.contains(index) ? positions[index] : .max, max(tracks[index].count - 1, 0))
         }
@@ -194,7 +197,9 @@ final class WallpaperController: ObservableObject {
         center.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                if self.isOn { self.reapply() } else { self.restoreSystemWallpapers() }
+                // While off, a Space may still show our artwork from before; put
+                // its wallpaper back, but leave anything the user chose alone.
+                if self.isOn { self.reapply() } else { self.restoreSystemWallpapers(onlyOurs: true) }
             }
         }
         center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -288,8 +293,7 @@ final class WallpaperController: ObservableObject {
         }
         guard changed else { return nil }
         let screens = NSScreen.screens
-        let jobs = jobs(for: ids, on: screens)
-        guard let files = try? await download(jobs.map { $0 }) else { return nil }
+        guard let files = try? await download(jobs(for: ids, on: screens)) else { return nil }
         return screens.indices.map { index in moving.contains(trackIndex(forScreen: index)) ? files[index] : nil }
     }
 
@@ -330,6 +334,23 @@ final class WallpaperController: ObservableObject {
         enabledKinds = enabled ? Set(ArtKind.allCases.map(\.rawValue)) : [ArtKind.painting.rawValue]
     }
 
+    func setMovement(_ movement: ArtMovement, enabled: Bool) {
+        if enabled {
+            movements.insert(movement.rawValue)
+        } else {
+            movements.remove(movement.rawValue)  // removing the last one means "Any"
+        }
+    }
+
+    /// How many artworks of the enabled kinds are tagged with each movement.
+    var movementCounts: [String: Int] {
+        var counts: [String: Int] = [:]
+        for artwork in artworks where enabledKinds.contains(artwork.kind) {
+            for movement in artwork.movements ?? [] { counts[movement, default: 0] += 1 }
+        }
+        return counts
+    }
+
     func setPalette(_ color: PaletteColor, enabled: Bool) {
         if enabled {
             palettes.insert(color.rawValue)
@@ -361,7 +382,7 @@ final class WallpaperController: ObservableObject {
         }
         for track in 0..<trackCount where tracks[track].isEmpty {
             let showing = Set(trackIDs().compactMap { $0 })
-            if let pick = pickRandom(1, excluding: showing).first {
+            if let pick = pickOne(excluding: showing) {
                 tracks[track] = [pick.id]
                 positions[track] = 0
             }
@@ -459,7 +480,7 @@ final class WallpaperController: ObservableObject {
         return screens.indices.compactMap { index in
             let track = trackIndex(forScreen: index)
             guard ids.indices.contains(track), let id = ids[track], let artwork = byID[id] else { return nil }
-            return (artwork, perDisplay ? Self.pixelSize(of: screens[index]) : largest)
+            return (artwork, perDisplay ? screens[index].pixelSize : largest)
         }
     }
 
@@ -487,14 +508,17 @@ final class WallpaperController: ObservableObject {
         "\(screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] ?? screen.localizedName)"
     }
 
+    /// Whether `url` is artwork OpenGallery downloaded.
+    private static func isOurs(_ url: URL?) -> Bool {
+        guard let url else { return false }
+        return url.standardizedFileURL.path.hasPrefix(ImageCache.directory.standardizedFileURL.path + "/")
+    }
+
     /// Remembers each display's wallpaper, unless it's already OpenGallery's.
     private func saveSystemWallpapers() {
         var saved = defaults.dictionary(forKey: Keys.systemWallpapers) as? [String: [String: Any]] ?? [:]
-        let ours = ImageCache.directory.standardizedFileURL.path
         for screen in NSScreen.screens {
-            guard let url = NSWorkspace.shared.desktopImageURL(for: screen),
-                  !url.standardizedFileURL.path.hasPrefix(ours)
-            else { continue }
+            guard let url = NSWorkspace.shared.desktopImageURL(for: screen), !Self.isOurs(url) else { continue }
             let options = NSWorkspace.shared.desktopImageOptions(for: screen) ?? [:]
             var entry: [String: Any] = ["path": url.path]
             if let scaling = options[.imageScaling] as? NSNumber { entry["scaling"] = scaling }
@@ -504,10 +528,12 @@ final class WallpaperController: ObservableObject {
         defaults.set(saved, forKey: Keys.systemWallpapers)
     }
 
-    /// Puts back each display's saved wallpaper, or macOS's default.
-    private func restoreSystemWallpapers() {
+    /// Puts back each display's saved wallpaper, or macOS's default. With
+    /// `onlyOurs`, displays not showing OpenGallery's artwork are left alone.
+    private func restoreSystemWallpapers(onlyOurs: Bool = false) {
         let saved = defaults.dictionary(forKey: Keys.systemWallpapers) as? [String: [String: Any]] ?? [:]
         for screen in NSScreen.screens {
+            if onlyOurs, !Self.isOurs(NSWorkspace.shared.desktopImageURL(for: screen)) { continue }
             var url = Self.defaultWallpaper
             var options: [NSWorkspace.DesktopImageOptionKey: Any] = [:]
             if let entry = saved[Self.displayID(of: screen)], let path = entry["path"] as? String,
@@ -532,35 +558,32 @@ final class WallpaperController: ObservableObject {
         let screens = NSScreen.screens
         for track in 0..<trackCount where upNext[track] == nil {
             let taken = Set(upNext.values.map(\.id))
-            guard let pick = pickRandom(1, excluding: taken).first else { continue }
+            guard let pick = pickOne(excluding: taken) else { continue }
             upNext[track] = pick
             let size = perDisplay && screens.indices.contains(track)
-                ? Self.pixelSize(of: screens[track]) : Self.largestPixelSize(of: screens)
+                ? screens[track].pixelSize : Self.largestPixelSize(of: screens)
             Task { _ = try? await cache.file(for: pick, covering: size) }
         }
     }
 
     private func takeUpNext(_ track: Int) -> Artwork? {
         defer { upNext[track] = nil }
-        return upNext[track] ?? pickRandom(1, excluding: Set(trackIDs().compactMap { $0 })).first
+        return upNext[track] ?? pickOne(excluding: Set(trackIDs().compactMap { $0 }))
     }
 
-    /// `count` distinct artworks matching the filters, avoiding recent ones
-    /// when the pool is big enough.
-    private func pickRandom(_ count: Int, excluding: Set<String>) -> [Artwork] {
+    /// A random artwork matching the filters, other than `excluding`,
+    /// avoiding recent ones when the pool is big enough.
+    private func pickOne(excluding: Set<String>) -> Artwork? {
         let recent = Set(tracks.flatMap { $0.suffix(Self.historyLimit) }).union(excluding)
         let pool = artworks.filter {
             enabledKinds.contains($0.kind)
                 && (!favoritesOnly || favorites.contains($0.id))
                 && (palettes.isEmpty || !palettes.isDisjoint(with: $0.palette ?? []))
+                && (movements.isEmpty || !movements.isDisjoint(with: $0.movements ?? []))
                 && !(hideNudity && $0.nude == true)
         }
-        var picks = Array(pool.filter { !recent.contains($0.id) }.shuffled().prefix(count))
-        if picks.count < count {
-            let chosen = Set(picks.map(\.id)).union(excluding)
-            picks += pool.filter { !chosen.contains($0.id) }.shuffled().prefix(count - picks.count)
-        }
-        return picks
+        return pool.filter { !recent.contains($0.id) }.randomElement()
+            ?? pool.filter { !excluding.contains($0.id) }.randomElement()
     }
 
     /// The display's name, shortened for the built-in screen. Identical
@@ -574,13 +597,8 @@ final class WallpaperController: ObservableObject {
         return "\(name(screen)) \(index + 1)"
     }
 
-    private static func pixelSize(of screen: NSScreen) -> CGSize {
-        CGSize(width: screen.frame.width * screen.backingScaleFactor,
-               height: screen.frame.height * screen.backingScaleFactor)
-    }
-
     private static func largestPixelSize(of screens: [NSScreen]) -> CGSize {
-        screens.map(pixelSize(of:)).max { $0.width * $0.height < $1.width * $1.height }
+        screens.map(\.pixelSize).max { $0.width * $0.height < $1.width * $1.height }
             ?? CGSize(width: 2880, height: 1800)
     }
 
@@ -605,12 +623,25 @@ final class WallpaperController: ObservableObject {
         launchAtLogin = SMAppService.mainApp.status == .enabled
     }
 
-    /// Launch at login defaults to on. Re-registering each launch keeps it
-    /// working after the app is rebuilt, re-signed, renamed or moved.
+    /// Launch at login defaults to on. Registering again when macOS has lost
+    /// the item keeps it working after the app is rebuilt, renamed or moved.
     private func restoreLoginItem() {
+        let status = SMAppService.mainApp.status
+        if status == .requiresApproval {
+            // Switched off in System Settings → Login Items; respect that.
+            defaults.set(false, forKey: Keys.launchAtLogin)
+            return
+        }
         let wanted = defaults.object(forKey: Keys.launchAtLogin) as? Bool ?? true
-        if wanted, SMAppService.mainApp.status != .enabled {
+        if wanted, status == .notRegistered || status == .notFound {
             try? SMAppService.mainApp.register()
         }
+    }
+}
+
+extension NSScreen {
+    /// The screen's size in pixels.
+    var pixelSize: CGSize {
+        CGSize(width: frame.width * backingScaleFactor, height: frame.height * backingScaleFactor)
     }
 }

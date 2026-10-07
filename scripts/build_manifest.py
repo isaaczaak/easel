@@ -16,6 +16,7 @@ import json
 import os
 import sys
 import urllib.request
+import uuid
 
 DATA_URL = "https://raw.githubusercontent.com/NationalGalleryOfArt/opendata/main/data/"
 IIIF_PREFIX = "https://api.nga.gov/iiif/"
@@ -23,6 +24,10 @@ IIIF_PREFIX = "https://api.nga.gov/iiif/"
 MIN_ASPECT = 1.2  # width / height; screens are ~1.6, the app crops the rest
 MIN_WIDTH = 2000  # px; anything smaller looks soft on a Retina display
 NUDITY_THRESHOLD = 0.5  # CLIP score from scripts/detect_nudity.py
+# Art movements the app can filter by (ArtMovement in Artwork.swift): NGA's
+# "Style" terms, leaving out furniture and regional styles.
+MOVEMENTS = {"Renaissance", "Baroque", "Rococo", "Neoclassic", "Romantic", "Realist",
+             "Impressionist", "Post-Impressionist", "Naive"}
 # Classifications the app can show (ArtKind in Artwork.swift).
 KINDS = {"painting", "drawing", "print", "photograph", "sculpture"}
 
@@ -62,6 +67,10 @@ def main():
             if row["iiifurl"] != IIIF_PREFIX + row["uuid"]:
                 continue  # app builds the URL from the uuid; skip anything unusual
             try:
+                uuid.UUID(row["uuid"])  # also used as a file name
+            except ValueError:
+                continue
+            try:
                 width, height = int(row["width"]), int(row["height"])
             except ValueError:
                 continue
@@ -98,11 +107,14 @@ def main():
     # Nudity: NGA's own keywords, plus CLIP scores (which catch the paintings
     # NGA didn't tag). Only flagged artworks carry the field.
     nude_objects = set()
+    movements = collections.defaultdict(list)
     with open(fetch(args.data_dir, "objects_terms.csv"), encoding="utf-8") as f:
         for row in csv.DictReader(f):
             term = row["term"].lower()
             if row["termtype"] in ("Keyword", "Theme") and ("nude" in term or "naked" in term):
                 nude_objects.add(int(row["objectid"]))
+            if row["termtype"] == "Style" and row["term"] in MOVEMENTS:
+                movements[int(row["objectid"])].append(row["term"])
     scores = {}
     nudity_path = os.path.join(args.data_dir, "nudity.json")
     if os.path.exists(nudity_path):
@@ -111,6 +123,8 @@ def main():
     for artwork in artworks:
         if artwork["oid"] in nude_objects or scores.get(artwork["id"], 0) >= NUDITY_THRESHOLD:
             artwork["nude"] = True
+        if artwork["oid"] in movements:
+            artwork["movements"] = sorted(set(movements[artwork["oid"]]))
 
     # Label details for the info card: medium, and the lead artist's
     # nationality and life dates ("American, 1796 - 1872"). Only non-empty
@@ -150,6 +164,8 @@ def main():
     palettes = collections.Counter(tag for a in artworks for tag in a.get("palette", []))
     if palettes:
         print("palette tags: " + ", ".join(f"{tag} {n}" for tag, n in palettes.most_common()))
+    tagged = collections.Counter(m for a in artworks for m in a.get("movements", []))
+    print("movements: " + ", ".join(f"{m} {n}" for m, n in tagged.most_common()))
     nude = collections.Counter(a["kind"] for a in artworks if a.get("nude"))
     print(f"flagged nude: {sum(nude.values())} (" + ", ".join(f"{k} {n}" for k, n in nude.most_common()) + ")")
 

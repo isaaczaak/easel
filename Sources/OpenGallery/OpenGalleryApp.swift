@@ -92,7 +92,7 @@ private struct ArtworkMenuItems: View {
             .keyboardShortcut("n")
         Button("Previous Artwork") { controller.previous() }
             .keyboardShortcut("p")
-            .disabled(!controller.canGoBack)
+            .disabled(!controller.canGoBack())
         if controller.current.count == 1, let artwork = controller.current.first?.artwork {
             FavoriteButton(controller: controller, artwork: artwork)
                 .keyboardShortcut("f")
@@ -131,7 +131,7 @@ enum MenuHeader {
     private static var observers: [Any] = []
     private static var isOnObserver: AnyCancellable?
     private static weak var controller: WallpaperController?
-    private static let toggle = SwitchTarget()
+    private static weak var toggle: AccentSwitch?
 
     /// Whether the menu lists the artwork. Flipping the switch while the
     /// menu is open only greys the items out, so the menu doesn't jump in
@@ -161,41 +161,74 @@ enum MenuHeader {
             forName: NSMenu.didBeginTrackingNotification, object: nil, queue: .main
         ) { note in
             MainActor.assumeIsolated {
-                guard let menu = note.object as? NSMenu,
-                      let item = menu.items.first, item.title == title
-                else { return }
+                guard let menu = note.object as? NSMenu, menu.items.first?.title == title else { return }
                 isOpen = true
-                if item.view == nil { item.view = makeView() }
-                toggle.control?.state = controller.isOn ? .on : .off
-                markCurrentScreen(in: menu, controller: controller)
+                hereScreen = Desktop.screenUnderPointer().flatMap { NSScreen.screens.firstIndex(of: $0) }
+                decorate(menu)
+                toggle?.setOn(controller.isOn, animated: false)
             }
         })
+        // SwiftUI can add or rebuild items just after the menu opens, which
+        // drops the custom views; put them back whenever the items change.
+        for name in [NSMenu.didAddItemNotification, NSMenu.didChangeItemNotification] {
+            observers.append(NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) { note in
+                MainActor.assumeIsolated {
+                    guard let menu = note.object as? NSMenu, menu.items.first?.title == title else { return }
+                    decorate(menu)
+                }
+            })
+        }
+    }
+
+    /// The display the menu was opened on.
+    private static var hereScreen: Int?
+    private static var decorating = false
+
+    /// Gives the header and the display labels their custom views, only
+    /// where missing or out of date (setting a view posts another change).
+    private static func decorate(_ menu: NSMenu) {
+        guard !decorating, let controller, let header = menu.items.first else { return }
+        decorating = true
+        defer { decorating = false }
+        if header.view == nil {
+            header.view = makeView()
+            toggle?.setOn(controller.isOn, animated: false)
+        }
+        markCurrentScreen(in: menu, controller: controller)
     }
 
     /// In per-display mode, draws each display's label with a small black
     /// dot after the one the menu was opened on. Plain menu text is always
     /// greyed out, so the labels get custom views like the header.
     private static func markCurrentScreen(in menu: NSMenu, controller: WallpaperController) {
-        let here = Desktop.screenUnderPointer().flatMap { NSScreen.screens.firstIndex(of: $0) }
         for showing in controller.current where !showing.screenName.isEmpty {
             guard let item = menu.items.first(where: { $0.title == showing.screenName }) else { continue }
-            item.view = screenLabel(showing.screenName, isHere: showing.id == here)
+            let id = NSUserInterfaceItemIdentifier(showing.id == hereScreen ? "here" : "label")
+            guard item.view?.identifier != id else { continue }
+            let view = screenLabel(showing.screenName, isHere: showing.id == hereScreen)
+            view.identifier = id
+            item.view = view
         }
+    }
+
+    /// A menu row holding `label`, inset like the menu's own items.
+    private static func menuRow(_ label: NSTextField, height: CGFloat) -> NSView {
+        label.translatesAutoresizingMaskIntoConstraints = false
+        let view = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: height))
+        view.autoresizingMask = [.width]
+        view.addSubview(label)
+        NSLayoutConstraint.activate([
+            label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 15),
+            label.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: 0.5),
+        ])
+        return view
     }
 
     private static func screenLabel(_ name: String, isHere: Bool) -> NSView {
         let label = NSTextField(labelWithString: name)
         label.font = .menuFont(ofSize: 0)
         label.textColor = .tertiaryLabelColor  // as macOS draws a disabled item
-        label.translatesAutoresizingMaskIntoConstraints = false
-
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 22))
-        view.autoresizingMask = [.width]
-        view.addSubview(label)
-        var constraints = [
-            label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 15),
-            label.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-        ]
+        let view = menuRow(label, height: 22)
         if isHere {
             let dot = NSView()
             dot.wantsLayer = true
@@ -203,25 +236,14 @@ enum MenuHeader {
             dot.layer?.cornerRadius = 2.5
             dot.translatesAutoresizingMaskIntoConstraints = false
             view.addSubview(dot)
-            constraints += [
+            NSLayoutConstraint.activate([
                 dot.widthAnchor.constraint(equalToConstant: 5),
                 dot.heightAnchor.constraint(equalToConstant: 5),
                 dot.leadingAnchor.constraint(equalTo: label.trailingAnchor, constant: 6),
                 dot.centerYAnchor.constraint(equalTo: label.centerYAnchor, constant: 0.5),
-            ]
+            ])
         }
-        NSLayoutConstraint.activate(constraints)
         return view
-    }
-
-    private final class SwitchTarget: NSObject {
-        weak var control: NSSwitch?
-
-        @objc func flip(_ sender: NSSwitch) {
-            MainActor.assumeIsolated {
-                MenuHeader.controller?.isOn = sender.state == .on
-            }
-        }
     }
 
     private static func makeView() -> NSView {
@@ -229,25 +251,77 @@ enum MenuHeader {
         // Same size as the menu's items, in bold, like Bluetooth's header.
         label.font = .systemFont(ofSize: NSFont.menuFont(ofSize: 0).pointSize, weight: .bold)
         label.textColor = .labelColor
-        label.translatesAutoresizingMaskIntoConstraints = false
+        let view = menuRow(label, height: 32)
 
-        let control = NSSwitch()
-        control.controlSize = .small
-        control.target = toggle
-        control.action = #selector(SwitchTarget.flip(_:))
+        let control = AccentSwitch()
+        control.onChange = { isOn in MenuHeader.controller?.isOn = isOn }
         control.translatesAutoresizingMaskIntoConstraints = false
-        toggle.control = control
-
-        let view = NSView(frame: NSRect(x: 0, y: 0, width: 200, height: 32))
-        view.autoresizingMask = [.width]
-        view.addSubview(label)
+        toggle = control
         view.addSubview(control)
         NSLayoutConstraint.activate([
-            label.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 15),
-            label.centerYAnchor.constraint(equalTo: view.centerYAnchor, constant: 1),
             control.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
             control.centerYAnchor.constraint(equalTo: view.centerYAnchor),
         ])
         return view
+    }
+}
+
+/// A switch in the system accent color. NSSwitch draws grey inside a menu,
+/// because the menu's window is never active.
+@MainActor
+private final class AccentSwitch: NSView {
+    var onChange: ((Bool) -> Void)?
+    private(set) var isOn = false
+    private let track = CALayer()
+    private let knob = CALayer()
+    private static let size = NSSize(width: 36, height: 20)
+
+    override init(frame: NSRect) {
+        super.init(frame: NSRect(origin: frame.origin, size: Self.size))
+        wantsLayer = true
+        track.cornerRadius = Self.size.height / 2
+        knob.backgroundColor = NSColor.white.cgColor
+        knob.cornerRadius = (Self.size.height - 4) / 2
+        knob.shadowColor = NSColor.black.cgColor
+        knob.shadowOpacity = 0.25
+        knob.shadowRadius = 1.5
+        knob.shadowOffset = CGSize(width: 0, height: -0.5)
+        layer?.addSublayer(track)
+        layer?.addSublayer(knob)
+        setOn(false, animated: false)
+    }
+
+    required init?(coder: NSCoder) { fatalError() }
+
+    override var intrinsicContentSize: NSSize { Self.size }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func mouseUp(with event: NSEvent) {
+        guard bounds.contains(convert(event.locationInWindow, from: nil)) else { return }
+        setOn(!isOn, animated: true)
+        onChange?(isOn)
+    }
+
+    func setOn(_ on: Bool, animated: Bool) {
+        isOn = on
+        CATransaction.begin()
+        CATransaction.setDisableActions(!animated)
+        CATransaction.setAnimationDuration(0.2)
+        let height = Self.size.height
+        track.frame = CGRect(origin: .zero, size: Self.size)
+        knob.frame = CGRect(x: on ? Self.size.width - height + 2 : 2, y: 2, width: height - 4, height: height - 4)
+        updateColors()
+        CATransaction.commit()
+    }
+
+    override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        updateColors()
+    }
+
+    private func updateColors() {
+        effectiveAppearance.performAsCurrentDrawingAppearance {
+            track.backgroundColor = (isOn ? NSColor.controlAccentColor : NSColor.labelColor.withAlphaComponent(0.15)).cgColor
+        }
     }
 }

@@ -43,9 +43,7 @@ final class DesktopSwiper {
     }
 
     func start() {
-        controller.$swipeEnabled.combineLatest(controller.$isOn)
-            .map { $0 && $1 }
-            .removeDuplicates()
+        controller.whileOn(controller.$swipeEnabled)
             .sink { [weak self] enabled in self?.setEnabled(enabled) }
             .store(in: &observers)
     }
@@ -62,7 +60,6 @@ final class DesktopSwiper {
             scrollMonitor = nil
         }
     }
-
 
     // MARK: - Trackpad
 
@@ -143,7 +140,6 @@ final class DesktopSwiper {
             cancel()
         }
     }
-
 
     /// Without earlier artwork, dragging right stretches instead of revealing.
     private var displayedFraction: CGFloat {
@@ -235,7 +231,6 @@ final class DesktopSwiper {
     private func removeStages() {
         stages.forEach { $0.close() }
         stages = []
-        if phase == .settling { phase = .idle }
     }
 
     /// Decode nothing yet, but make sure the next artwork is downloading
@@ -259,18 +254,18 @@ private final class Stage: NSWindow {
     private let pixelSize: CGSize
     /// The screen's place in `NSScreen.screens`.
     let index: Int
+    /// Space between neighbouring artworks while they slide.
+    private static let gap: CGFloat = 24
 
     init(screen: NSScreen, index: Int) {
         self.index = index
-        pixelSize = CGSize(width: screen.frame.width * screen.backingScaleFactor,
-                           height: screen.frame.height * screen.backingScaleFactor)
+        pixelSize = screen.pixelSize
         super.init(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
         level = NSWindow.Level(Int(CGWindowLevelForKey(.desktopWindow)) + 1)
         collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         ignoresMouseEvents = true
         isReleasedWhenClosed = false
         hasShadow = false
-        backgroundColor = .black
         alphaValue = 0  // until the current artwork is decoded, so it never flashes black
 
         let view = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
@@ -279,15 +274,14 @@ private final class Stage: NSWindow {
         contentView = view
 
         let size = screen.frame.size
-        let scale = screen.backingScaleFactor
         strip.frame = CGRect(origin: .zero, size: size)
         for (layer, slot) in [(previous, -1), (current, 0), (next, 1)] {
             // Same fill-and-crop as the wallpaper, so the hand-off is invisible.
             layer.contentsGravity = .resizeAspectFill
             layer.masksToBounds = true
-            layer.contentsScale = scale
+            layer.contentsScale = screen.backingScaleFactor
             layer.backgroundColor = NSColor(white: 0.08, alpha: 1).cgColor
-            layer.frame = CGRect(x: CGFloat(slot) * (size.width + DesktopSwiperGap.value), y: 0,
+            layer.frame = CGRect(x: CGFloat(slot) * (size.width + Self.gap), y: 0,
                                  width: size.width, height: size.height)
             strip.addSublayer(layer)
         }
@@ -299,7 +293,7 @@ private final class Stage: NSWindow {
     /// Moves the strip so `fraction` of a screen width has slid past; -1
     /// shows the next artwork, 1 the previous.
     func slide(to fraction: CGFloat, animated: Bool) {
-        let x = fraction * (frame.width + DesktopSwiperGap.value)
+        let x = fraction * (frame.width + Self.gap)
         CATransaction.begin()
         if animated {
             CATransaction.setAnimationDuration(0.32)
@@ -390,10 +384,6 @@ enum Crossfade {
         // Don't hold the switch up if an image won't decode.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { start() }
     }
-}
-
-private enum DesktopSwiperGap {
-    static let value: CGFloat = 24
 }
 
 /// Where the pointer is, relative to the desktop.

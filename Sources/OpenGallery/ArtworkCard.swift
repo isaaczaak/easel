@@ -13,7 +13,6 @@ final class ArtworkCardPresenter {
     private var monitors: [Any] = []
     private var tap: CFMachPort?
     private var tapSource: CFRunLoopSource?
-    private var permissionTimer: Timer?
     private var observers: [AnyCancellable] = []
     private var panel: CardPanel?
     /// Pressure stage of the current press, so one press opens one card.
@@ -24,9 +23,7 @@ final class ArtworkCardPresenter {
     }
 
     func start() {
-        controller.$forceClickEnabled.combineLatest(controller.$isOn)
-            .map { $0 && $1 }
-            .removeDuplicates()
+        controller.whileOn(controller.$forceClickEnabled)
             .sink { [weak self] enabled in self?.setEnabled(enabled) }
             .store(in: &observers)
         NSWorkspace.shared.notificationCenter
@@ -44,17 +41,9 @@ final class ArtworkCardPresenter {
         if CGPreflightListenEventAccess() {
             installTap()
         } else {
-            // Adds OpenGallery to Privacy & Security → Input Monitoring and asks once;
-            // start listening as soon as it's switched on.
+            // Adds OpenGallery to Privacy & Security → Input Monitoring and asks
+            // once. macOS relaunches the app when it's granted.
             CGRequestListenEventAccess()
-            permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
-                MainActor.assumeIsolated {
-                    guard CGPreflightListenEventAccess() else { return }
-                    timer.invalidate()
-                    self?.permissionTimer = nil
-                    self?.installTap()
-                }
-            }
         }
         // Any click outside the card closes it.
         if let monitor = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown], handler: { [weak self] _ in
@@ -66,11 +55,20 @@ final class ArtworkCardPresenter {
 
     /// Pressure events come with every trackpad press; stage 2 is the "deep"
     /// click macOS uses for Force Click. Global monitors aren't sent them,
-    /// but a listen-only event tap is.
+    /// but a listen-only event tap is. They arrive as trackpad gesture events
+    /// (type 29), which NSEvent turns into `.pressure`.
     private func installTap() {
-        let mask = CGEventMask(1) << UInt64(NSEvent.EventType.pressure.rawValue)
+        let gesture = UInt64(29)  // kCGEventGesture, not in CGEventType
+        let mask = (CGEventMask(1) << gesture) | (CGEventMask(1) << UInt64(NSEvent.EventType.pressure.rawValue))
         let callback: CGEventTapCallBack = { _, type, event, info in
             if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                // macOS pauses a tap that answers too slowly; switch it back on.
+                if let info {
+                    let presenter = Unmanaged<ArtworkCardPresenter>.fromOpaque(info).takeUnretainedValue()
+                    MainActor.assumeIsolated {
+                        if let tap = presenter.tap { CGEvent.tapEnable(tap: tap, enable: true) }
+                    }
+                }
                 return Unmanaged.passUnretained(event)
             }
             if let info, let nsEvent = NSEvent(cgEvent: event), nsEvent.type == .pressure {
@@ -89,8 +87,6 @@ final class ArtworkCardPresenter {
     }
 
     private func removeTap() {
-        permissionTimer?.invalidate()
-        permissionTimer = nil
         if let tapSource { CFRunLoopRemoveSource(CFRunLoopGetMain(), tapSource, .commonModes) }
         if let tap { CGEvent.tapEnable(tap: tap, enable: false) }
         tap = nil
@@ -228,7 +224,7 @@ private struct ArtworkCard: View {
             .font(.system(size: 12, weight: .medium))
 
             // The Gallery's suggested credit for its open access images.
-            Link(destination: URL(string: "https://www.nga.gov/terms-and-notices#open-access")!) {
+            Link(destination: Artwork.openAccessPolicy) {
                 Label {
                     Text("Public domain (CC0) · Courtesy National Gallery of Art, Washington")
                 } icon: {
