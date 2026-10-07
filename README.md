@@ -40,8 +40,8 @@ every 15 minutes, 3 hours or day, and show the same artwork on every display
 or different art on each.
 
 **Filters:** Choose artwork by type, orientation, art movement and palette.
-OpenGallery hides nudity by default, using the Gallery's own tags and image
-analysis.
+OpenGallery hides nudity by default, using the National Gallery of Art's own
+tags and image analysis.
 
 **Desktop gestures:** Swipe sideways with two fingers to see the next or
 previous artwork. Force Click to see the artwork's title, artist, date and
@@ -49,8 +49,13 @@ medium.
 
 **Favorites:** Save up to 20 favorites, and show only those if you like.
 
-**On/off:** Switch OpenGallery off from its menu to get your old wallpaper
-back.
+**On/off:** Switch OpenGallery off from its menu to revert to your system
+wallpaper.
+
+**Offline:** Keeps rotating through artwork it has already downloaded.
+
+**Small cache:** Keeps only the 30 most recent images and deletes older ones
+as it goes, so it never grows past about 50–100 MB, depending on your screens.
 
 OpenGallery runs on Apple Silicon and Intel Macs with macOS 13 or later.
 
@@ -78,10 +83,10 @@ Install OpenGallery from https://github.com/isaaczaak/opengallery.
 
 What it is: an open-source (MIT) macOS menu bar app, written in Swift, that
 sets the desktop wallpaper to public-domain paintings from the National
-Gallery of Art. It downloads images only from the Gallery's image server
-(api.nga.gov), collects no data, and needs no account or API key. You'll
-build it from source with Apple's command line tools. The only thing it
-installs is /Applications/OpenGallery.app, which starts at login.
+Gallery of Art. It downloads images only from the National Gallery of Art's
+image server (api.nga.gov), collects no data, and needs no account or API
+key. You'll build it from source with Apple's command line tools. The only
+thing it installs is /Applications/OpenGallery.app, which starts at login.
 
 1. Check this Mac runs macOS 13 or later (sw_vers). If `swift --version`
    fails, run `xcode-select --install`, wait for me to finish the installer,
@@ -150,18 +155,18 @@ after an update.
 **Downloads:** Each image downloads only when it's about to show, sized for
 your screen.
 
-**Storage:** About 60 MB in `~/Library/Caches`, which macOS can clear when it
-needs space.
+**Storage:** The 30 most recent images, about 50–100 MB depending on your
+screens, in `~/Library/Caches`, which macOS can clear when it needs space.
 
 **Memory:** About 50 MB.
 
 ### Artwork list
 
 `scripts/build_manifest.py` builds `Resources/manifest.json` from the
-Gallery's open data. It keeps open-access images at least 2000px on the long
-side. Landscape works fill the screen; the app shows portrait and square works
-whole, on a gallery wall. Two more scripts tag the artwork and then rebuild
-the list:
+National Gallery of Art's open data. It keeps open-access images at least
+2000px on the long side. Landscape works fill the screen; the app shows
+portrait and square works whole, on a gallery wall. Two more scripts tag the
+artwork and then rebuild the list:
 
 ```bash
 scripts/build_manifest.py
@@ -173,8 +178,7 @@ python3 -m venv .data/venv && .data/venv/bin/pip install torch open_clip_torch p
 ```
 
 `bundle.sh` compresses the list into the app, and the app unpacks it at
-launch. OpenGallery downloads each image at your screen's resolution from the
-Gallery's IIIF server and keeps the newest 30 in `~/Library/Caches`.
+launch.
 
 ### Layout
 

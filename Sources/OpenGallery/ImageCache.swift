@@ -33,7 +33,14 @@ final class ImageCache {
             return local
         }
 
-        let (temp, response) = try await URLSession.shared.download(from: artwork.imageURL(width: width))
+        let temp: URL, response: URLResponse
+        do {
+            (temp, response) = try await URLSession.shared.download(from: artwork.imageURL(width: width))
+        } catch {
+            // Offline: a copy made for another screen size still looks right.
+            if let saved = savedFile(for: artwork.id) { return saved }
+            throw error
+        }
         defer { try? FileManager.default.removeItem(at: temp) }
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               http.mimeType == "image/jpeg"
@@ -48,6 +55,25 @@ final class ImageCache {
         }
         prune(keeping: local)
         return local
+    }
+
+    /// Ids of artworks with an image on disk, for showing while offline.
+    func savedIDs() -> Set<String> {
+        let files = (try? FileManager.default.contentsOfDirectory(atPath: directory.path)) ?? []
+        return Set(files.filter { $0.hasSuffix(".jpg") && $0.count > 36 }.map { String($0.prefix(36)) })
+    }
+
+    /// The newest image on disk for `id`, at whatever size it was saved.
+    private func savedFile(for id: String) -> URL? {
+        let keys: [URLResourceKey] = [.contentModificationDateKey]
+        let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: keys)) ?? []
+        return files
+            .filter { $0.lastPathComponent.hasPrefix(id + "-") }
+            .max {
+                let a = (try? $0.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast
+                let b = (try? $1.resourceValues(forKeys: Set(keys)).contentModificationDate) ?? .distantPast
+                return a < b
+            }
     }
 
     private func prune(keeping keep: URL) {

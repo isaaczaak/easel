@@ -1,5 +1,6 @@
 import AppKit
 import Combine
+import Network
 import ServiceManagement
 
 enum RotationInterval: Int, CaseIterable, Identifiable {
@@ -158,6 +159,9 @@ final class WallpaperController: ObservableObject {
     /// The fresh artwork each track goes back to once history runs out.
     private var upPrevious: [Int: Artwork] = [:]
     private var loadTask: Task<Void, Never>?
+    /// Offline, artwork comes only from what's already downloaded.
+    private var online = true
+    private let network = NWPathMonitor()
     private var timer: Timer?
 
     /// `setting` combined with the on/off switch: a desktop feature is
@@ -215,6 +219,11 @@ final class WallpaperController: ObservableObject {
     }
 
     func start() {
+        network.pathUpdateHandler = { [weak self] path in
+            Task { @MainActor in self?.setOnline(path.status == .satisfied) }
+        }
+        network.start(queue: .global(qos: .utility))
+
         restoreLoginItem()
         refreshLoginItemStatus()
 
@@ -478,7 +487,7 @@ final class WallpaperController: ObservableObject {
                     }
                     : jobs.first.map { [Showing(id: 0, screenName: "", artwork: $0.0)] } ?? []
                 lastChange = Date()
-                status = nil
+                status = online ? nil : "Offline — showing downloaded artwork"
                 prefetch()
                 then?()
             } catch {
@@ -511,7 +520,7 @@ final class WallpaperController: ObservableObject {
                     }
                     defaults.set(tracks, forKey: Keys.tracks)
                     defaults.set(positions, forKey: Keys.positions)
-                    status = "Offline — couldn't load artwork"
+                    status = online ? "Couldn't load artwork" : "Offline — showing downloaded artwork"
                     then?()
                 }
             }
@@ -693,10 +702,27 @@ final class WallpaperController: ObservableObject {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
+    private func setOnline(_ isOnline: Bool) {
+        guard isOnline != online else { return }
+        online = isOnline
+        // Ready artworks picked online may not be downloaded yet; pick again.
+        upNext = [:]; upPrevious = [:]
+        status = isOnline ? nil : "Offline — showing downloaded artwork"
+        prefetch()
+    }
+
     private func pickOne(excluding: Set<String>) -> Artwork? {
         let excluded = Set(excluding.compactMap(catalog.index(of:)))
         let recent = excluded.union(tracks.flatMap { $0.suffix(Self.historyLimit) }.compactMap(catalog.index(of:)))
         let filter = filter
+        if !online {
+            // Only what's on disk: matching the filters if possible, else anything.
+            let saved = cache.savedIDs().compactMap(catalog.index(of:)).filter { !excluded.contains($0) }
+            let matching = saved.filter(filter.matches)
+            let pool = matching.isEmpty ? saved : matching
+            let fresh = pool.filter { !recent.contains($0) }
+            return (fresh.randomElement() ?? pool.randomElement()).map(catalog.artwork(at:))
+        }
 
         // One pass, picking uniformly among matches (reservoir sampling), so
         // no list of candidates is built.
