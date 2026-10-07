@@ -65,8 +65,7 @@ struct Manifest: Codable {
     let artworks: [Artwork]
 
     static func loadBundled() -> Manifest {
-        guard let url = Bundle.main.url(forResource: "manifest", withExtension: "json"),
-              let data = try? Data(contentsOf: url),
+        guard let data = bundledData(),
               let manifest = try? JSONDecoder().decode(Manifest.self, from: data)
         else {
             NSLog("OpenGallery: bundled manifest missing or invalid")
@@ -74,6 +73,17 @@ struct Manifest: Codable {
         }
         // Ids become file names and URL paths, so allow only UUIDs.
         return Manifest(version: manifest.version, artworks: manifest.artworks.filter { UUID(uuidString: $0.id) != nil })
+    }
+
+    /// The manifest JSON: compressed in the app bundle (see scripts/bundle.sh),
+    /// plain when run during development.
+    private static func bundledData() -> Data? {
+        if let url = Bundle.main.url(forResource: "manifest.json", withExtension: "lzma"),
+           let compressed = NSData(contentsOf: url) {
+            return try? compressed.decompressed(using: .lzma) as Data
+        }
+        guard let url = Bundle.main.url(forResource: "manifest", withExtension: "json") else { return nil }
+        return try? Data(contentsOf: url)
     }
 }
 

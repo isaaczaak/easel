@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 
 APP_NAME="OpenGallery"
 BUNDLE_ID="com.isaacng.gallery-wallpaper"
-VERSION="0.1.0"
+VERSION="${VERSION:-0.1.0}"
 APP="build/$APP_NAME.app"
 
 swift build -c release --arch arm64 --arch x86_64
@@ -16,7 +16,11 @@ BIN="$(swift build -c release --arch arm64 --arch x86_64 --show-bin-path)/$APP_N
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
-cp Resources/manifest.json "$APP/Contents/Resources/"
+# Debug symbols are only useful to developers; stripping halves the binary.
+strip -x "$APP/Contents/MacOS/$APP_NAME"
+# The artwork list ships compressed (5.6 MB → under 1 MB); the app unpacks it
+# at launch in a few tens of milliseconds.
+swift scripts/compress.swift Resources/manifest.json "$APP/Contents/Resources/manifest.json.lzma"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 
 cat > "$APP/Contents/Info.plist" <<PLIST
@@ -43,8 +47,9 @@ PLIST
 # exists, so privacy permissions survive rebuilds; otherwise ad-hoc, which
 # is fine for running on this Mac. Distribution needs a Developer ID
 # signature and notarization instead.
-SIGN_ID="OpenGallery Local Signing"
-if ! security find-identity -v -p codesigning | grep -q "$SIGN_ID"; then
+# SIGN_ID=- forces ad-hoc signing (scripts/release.sh does this).
+SIGN_ID="${SIGN_ID:-OpenGallery Local Signing}"
+if [ "$SIGN_ID" != "-" ] && ! security find-identity -v -p codesigning | grep -q "$SIGN_ID"; then
     SIGN_ID="-"
 fi
 codesign --force --sign "$SIGN_ID" --options runtime "$APP"
