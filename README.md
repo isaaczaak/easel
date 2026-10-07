@@ -56,12 +56,37 @@ This builds OpenGallery, copies it to `/Applications` and launches it. It
 appears in your menu bar and starts at login. Because you built it yourself,
 macOS opens it without a security warning.
 
-Force Click needs the Input Monitoring permission. OpenGallery asks for it the
-first time; you can also turn it on in System Settings → Privacy & Security →
-Input Monitoring. After an update, you may need to switch it off and on again.
+Force Click is off by default. It needs the Input Monitoring permission, which
+OpenGallery asks for when you turn it on; you can also grant it in System
+Settings → Privacy & Security → Input Monitoring.
 
-To update, run `git pull` and `scripts/bundle.sh --install` again. To remove
-it, quit OpenGallery from its menu and delete `/Applications/OpenGallery.app`.
+To update, run `git pull` and `scripts/bundle.sh --install` again. If Force
+Click stops working after an update, allow OpenGallery again under Input
+Monitoring: macOS ties the permission to each build. To remove it, quit
+OpenGallery from its menu and delete `/Applications/OpenGallery.app`.
+
+### Agent prompt
+
+Or paste this into a coding agent such as Claude Code:
+
+```text
+Install OpenGallery, a macOS menu bar app, from
+https://github.com/isaaczaak/opengallery.
+
+1. Check this Mac runs macOS 13 or later (sw_vers). If `swift --version`
+   fails, run `xcode-select --install`, wait for me to finish the installer,
+   then continue.
+2. Clone the repo into ~/Code/opengallery (or update it with git pull if it's
+   already there) and run `scripts/bundle.sh --install` from inside it.
+3. Confirm OpenGallery is running (pgrep -x OpenGallery) and tell me to look
+   for its icon in the menu bar.
+4. Tell me that Force Click artwork details is optional and off by default:
+   to use it, I turn it on in OpenGallery's Settings and allow OpenGallery
+   under System Settings → Privacy & Security → Input Monitoring. After a
+   future update I may need to allow it again.
+
+Don't use sudo, and don't change any other system or privacy settings.
+```
 
 ## Refresh the artwork list
 
@@ -88,6 +113,15 @@ and cached in `~/Library/Caches` (newest 20 kept).
 - `Sources/OpenGallery/` — SwiftUI `MenuBarExtra` app and Settings window
 - `scripts/` — manifest, color analysis, icon and bundling scripts
 - `Resources/` — manifest and icon assets bundled into the app
+
+## Developing
+
+Each rebuild gets a new signature, so macOS forgets OpenGallery's Input
+Monitoring permission. If you rebuild often, `scripts/make_signing_cert.sh`
+creates a self-signed certificate in your login keychain, trusted only for
+code signing, that `bundle.sh` then signs with, so the permission sticks. Any
+program running as you could also sign with it and take over that
+permission; delete it in Keychain Access to undo.
 
 ## License
 
