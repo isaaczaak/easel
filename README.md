@@ -55,21 +55,31 @@ back.
 
 OpenGallery runs on Apple Silicon and Intel Macs with macOS 13 or later.
 
-## How it works
-
-**Downloads:** Each image downloads only when it's about to show, sized for
-your screen.
-
-**Storage:** About 60 MB in `~/Library/Caches`, which macOS can clear when it
-needs space.
-
-**Memory:** About 50 MB.
-
-**Privacy:** OpenGallery only connects to the National Gallery of Art's image
-server and collects no data about you. Force Click reads trackpad pressure on
-the desktop and nothing else.
-
 ## Install
+
+### Agent prompt
+
+Paste this into a coding agent such as Claude Code and it installs
+OpenGallery for you:
+
+```text
+Install OpenGallery, a macOS menu bar app, from
+https://github.com/isaaczaak/opengallery.
+
+1. Check this Mac runs macOS 13 or later (sw_vers). If `swift --version`
+   fails, run `xcode-select --install`, wait for me to finish the installer,
+   then continue.
+2. Clone the repo into ~/Code/opengallery (or update it with git pull if it's
+   already there) and run `scripts/bundle.sh --install` from inside it.
+3. Confirm OpenGallery is running (pgrep -x OpenGallery) and tell me to look
+   for its icon in the menu bar.
+4. Tell me that Force Click artwork details is optional and off by default:
+   to use it, I turn it on in OpenGallery's Settings and allow OpenGallery
+   under System Settings → Privacy & Security → Input Monitoring. After a
+   future update I may need to allow it again.
+
+Don't use sudo, and don't change any other system or privacy settings.
+```
 
 ### Download
 
@@ -112,34 +122,25 @@ after an update.
 **To uninstall**, quit OpenGallery from its menu and delete
 `/Applications/OpenGallery.app`.
 
-### Agent prompt
-
-You can also paste this into a coding agent such as Claude Code:
-
-```text
-Install OpenGallery, a macOS menu bar app, from
-https://github.com/isaaczaak/opengallery.
-
-1. Check this Mac runs macOS 13 or later (sw_vers). If `swift --version`
-   fails, run `xcode-select --install`, wait for me to finish the installer,
-   then continue.
-2. Clone the repo into ~/Code/opengallery (or update it with git pull if it's
-   already there) and run `scripts/bundle.sh --install` from inside it.
-3. Confirm OpenGallery is running (pgrep -x OpenGallery) and tell me to look
-   for its icon in the menu bar.
-4. Tell me that Force Click artwork details is optional and off by default:
-   to use it, I turn it on in OpenGallery's Settings and allow OpenGallery
-   under System Settings → Privacy & Security → Input Monitoring. After a
-   future update I may need to allow it again.
-
-Don't use sudo, and don't change any other system or privacy settings.
-```
-
 ## Development
 
 <p align="center">
   <img src="docs/architecture.svg" alt="How OpenGallery works: the build scripts turn NGA open data into a packed catalog; on your Mac, OpenGallery picks artwork, downloads it from the NGA image server and sets the wallpaper, with swipe and Force Click on the desktop" width="100%">
 </p>
+
+### How it works
+
+**Downloads:** Each image downloads only when it's about to show, sized for
+your screen.
+
+**Storage:** About 60 MB in `~/Library/Caches`, which macOS can clear when it
+needs space.
+
+**Memory:** About 50 MB.
+
+**Privacy:** OpenGallery only connects to the National Gallery of Art's image
+server and collects no data about you. Force Click reads trackpad pressure on
+the desktop and nothing else.
 
 ### Artwork list
 
