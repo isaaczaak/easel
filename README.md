@@ -185,9 +185,11 @@ Gallery's IIIF server and keeps the newest 20 in `~/Library/Caches`.
 
 ### Releases
 
-`scripts/release.sh 0.2.0` builds the app, zips it and publishes it on
-GitHub Releases. Run it from an up-to-date `main` with nothing uncommitted.
-Releases are signed ad hoc; notarizing them needs an Apple Developer ID.
+Write what's new in `docs/releases/v0.3.0.md`, then run
+`scripts/release.sh 0.3.0` from an up-to-date `main` with nothing uncommitted.
+It builds the app, zips it and publishes it on GitHub Releases, adding install
+steps after your changelog. `--notes-only` rewrites an existing release's
+notes. Releases are signed ad hoc; notarizing them needs an Apple Developer ID.
 
 ### Signing
 
