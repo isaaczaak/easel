@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Build the wallpaper manifest from the National Gallery of Art open data.
 
-Downloads objects.csv and published_images.csv from
+Downloads objects.csv, published_images.csv and related tables from
 github.com/NationalGalleryOfArt/opendata, keeps open-access, primary-view,
 landscape images that are large enough for a desktop, and writes a compact
 JSON manifest the app reads.
@@ -111,6 +111,32 @@ def main():
     for artwork in artworks:
         if artwork["oid"] in nude_objects or scores.get(artwork["id"], 0) >= NUDITY_THRESHOLD:
             artwork["nude"] = True
+
+    # Label details for the info card: medium, and the lead artist's
+    # nationality and life dates ("American, 1796 - 1872"). Only non-empty
+    # values are written, to keep the manifest small.
+    bios = {}
+    with open(fetch(args.data_dir, "constituents.csv"), encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            bios[row["constituentid"]] = row["displaydate"].strip()
+    lead_artist = {}
+    with open(fetch(args.data_dir, "objects_constituents.csv"), encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            if row["roletype"] != "artist":
+                continue
+            order = int(row["displayorder"] or 99)
+            current = lead_artist.get(row["objectid"])
+            if current is None or order < current[0]:
+                lead_artist[row["objectid"]] = (order, row["constituentid"])
+    for artwork in artworks:
+        oid = str(artwork["oid"])
+        medium = objects[oid]["medium"].strip()
+        if medium:
+            artwork["medium"] = medium
+        lead = lead_artist.get(oid)
+        bio = bios.get(lead[1], "") if lead else ""
+        if bio and bio != artwork["artist"]:
+            artwork["bio"] = bio
 
     artworks.sort(key=lambda a: a["oid"])
     with open(args.out, "w", encoding="utf-8") as f:

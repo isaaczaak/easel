@@ -13,6 +13,10 @@ struct Artwork: Codable, Identifiable, Hashable {
     let palette: [String]?
     /// Flagged by NGA's keywords or the CLIP pass in scripts/detect_nudity.py.
     let nude: Bool?
+    /// e.g. "oil on canvas".
+    let medium: String?
+    /// The lead artist's nationality and life dates, e.g. "American, 1796 - 1872".
+    let bio: String?
 
     /// NGA's artwork page. The legacy URL redirects to the current slugged page.
     var pageURL: URL {

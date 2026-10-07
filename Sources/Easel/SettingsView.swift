@@ -71,10 +71,25 @@ private struct GeneralSettings: View {
                     .foregroundStyle(.secondary)
             }
             Section {
+                Toggle("Swipe to change artwork", isOn: $controller.swipeEnabled)
+                Toggle("Force Click for artwork details", isOn: $controller.forceClickEnabled)
+                if controller.forceClickEnabled {
+                    InputMonitoringStatus()
+                }
+            } header: {
+                Text("On the desktop")
+            } footer: {
+                Text("Swipe sideways with two fingers on an empty part of the desktop: left for the next artwork, right for the previous one. Press firmly on the desktop to see what you're looking at.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
                 Toggle("Launch at login", isOn: Binding(
                     get: { controller.launchAtLogin },
                     set: { controller.setLaunchAtLogin($0) }
                 ))
+            } footer: {
+                Text("Artwork from the [National Gallery of Art's open access collection](https://www.nga.gov/artworks/free-images-and-open-access), released under CC0.")
+                    .foregroundStyle(.secondary)
             }
         }
         .formStyle(.grouped)
@@ -137,12 +152,95 @@ private struct ArtworkSettings: View {
             }
             Section {
                 Toggle("Favorites only", isOn: $controller.favoritesOnly)
-            } footer: {
-                Text("Artwork from the [National Gallery of Art's open access collection](https://www.nga.gov/artworks/free-images-and-open-access), released under CC0.")
-                    .foregroundStyle(.secondary)
+                    .disabled(controller.favorites.isEmpty && !controller.favoritesOnly)
+                FavoritesList(controller: controller)
+            } header: {
+                Text("Favorites (\(controller.favorites.count) of \(WallpaperController.favoritesLimit))")
             }
         }
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)
+    }
+}
+
+/// Favorites, newest first, scrolling once there are more than a few.
+private struct FavoritesList: View {
+    @ObservedObject var controller: WallpaperController
+
+    var body: some View {
+        let favorites = controller.favoriteArtworks
+        if favorites.isEmpty {
+            Text("Choose Add to Favorites in the menu bar to keep artwork you like here.")
+                .foregroundStyle(.secondary)
+        } else {
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(favorites) { artwork in
+                        FavoriteRow(artwork: artwork) { controller.toggleFavorite(artwork) }
+                    }
+                }
+                .padding(.vertical, 2)
+            }
+            .frame(height: min(CGFloat(favorites.count) * 50, 250))
+        }
+    }
+}
+
+private struct FavoriteRow: View {
+    let artwork: Artwork
+    let remove: () -> Void
+
+    var body: some View {
+        HStack(spacing: 10) {
+            AsyncImage(url: artwork.imageURL(width: 200)) { image in
+                image.resizable().scaledToFill()
+            } placeholder: {
+                Color.secondary.opacity(0.15)
+            }
+            .frame(width: 56, height: 40)
+            .clipShape(RoundedRectangle(cornerRadius: 4))
+
+            VStack(alignment: .leading, spacing: 2) {
+                Link(artwork.menuTitle, destination: artwork.pageURL)
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+                if !artwork.menuByline.isEmpty {
+                    Text(artwork.menuByline)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+            }
+            Spacer(minLength: 0)
+            Button(action: remove) {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
+            .help("Remove from Favorites")
+        }
+    }
+}
+
+/// Force Click needs Input Monitoring; offers the way to switch it on.
+private struct InputMonitoringStatus: View {
+    @State private var granted = CGPreflightListenEventAccess()
+    private let refresh = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        Group {
+            if !granted {
+                HStack {
+                    Label("Needs Input Monitoring permission", systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                    Spacer()
+                    Button("Open Privacy Settings…") {
+                        NSWorkspace.shared.open(URL(string:
+                            "x-apple.systempreferences:com.apple.preference.security?Privacy_ListenEvent")!)
+                    }
+                }
+            }
+        }
+        .onReceive(refresh) { _ in granted = CGPreflightListenEventAccess() }
     }
 }

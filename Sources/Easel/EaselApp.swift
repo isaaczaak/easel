@@ -21,9 +21,13 @@ struct EaselApp: App {
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let controller = WallpaperController()
+    private lazy var swiper = DesktopSwiper(controller: controller)
+    private lazy var card = ArtworkCardPresenter(controller: controller)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         controller.start()
+        swiper.start()
+        card.start()
     }
 }
 
@@ -52,9 +56,7 @@ struct MenuContent: View {
                     Button("View at National Gallery of Art…") {
                         NSWorkspace.shared.open(showing.artwork.pageURL)
                     }
-                    Button(controller.isFavorite(showing.artwork) ? "Remove from Favorites" : "Add to Favorites") {
-                        controller.toggleFavorite(showing.artwork)
-                    }
+                    FavoriteButton(controller: controller, artwork: showing.artwork)
                 }
             }
         }
@@ -70,10 +72,8 @@ struct MenuContent: View {
             .keyboardShortcut("p")
             .disabled(!controller.canGoBack)
         if controller.current.count == 1, let artwork = controller.current.first?.artwork {
-            Button(controller.isFavorite(artwork) ? "Remove from Favorites" : "Add to Favorites") {
-                controller.toggleFavorite(artwork)
-            }
-            .keyboardShortcut("f")
+            FavoriteButton(controller: controller, artwork: artwork)
+                .keyboardShortcut("f")
         }
 
         Divider()
@@ -85,5 +85,21 @@ struct MenuContent: View {
         SettingsButton()
         Button("Quit Easel") { NSApp.terminate(nil) }
             .keyboardShortcut("q")
+    }
+}
+
+private struct FavoriteButton: View {
+    @ObservedObject var controller: WallpaperController
+    let artwork: Artwork
+
+    var body: some View {
+        if controller.isFavorite(artwork) {
+            Button("Remove from Favorites") { controller.toggleFavorite(artwork) }
+        } else if controller.favoritesFull {
+            Button("Favorites Full (\(WallpaperController.favoritesLimit) Max)") {}
+                .disabled(true)
+        } else {
+            Button("Add to Favorites") { controller.toggleFavorite(artwork) }
+        }
     }
 }

@@ -28,44 +28,59 @@ struct Showing: Identifiable {
 
 /// Picks artworks, downloads them and sets them as the desktop picture,
 /// rotating on a timer. Shows one artwork everywhere, or one per display.
+///
+/// History is kept as *tracks*: one in single mode, shared by every screen,
+/// or one per screen (in `NSScreen.screens` order) in per-display mode, so
+/// each screen can go back and forth on its own.
 @MainActor
 final class WallpaperController: ObservableObject {
     @Published private(set) var current: [Showing] = []
     @Published private(set) var status: String?
-    @Published private(set) var favorites: Set<String>
+    /// Favorite artwork ids, newest first.
+    @Published private(set) var favorites: [String]
     @Published private(set) var launchAtLogin = false
+    /// The file on each screen, in `NSScreen.screens` order.
+    @Published private(set) var currentFiles: [URL] = []
 
     @Published var interval: RotationInterval {
         didSet { defaults.set(interval.rawValue, forKey: Keys.interval) }
     }
     @Published var enabledKinds: Set<String> {
-        didSet { defaults.set(Array(enabledKinds), forKey: Keys.kinds); upNext = [] }
+        didSet { defaults.set(Array(enabledKinds), forKey: Keys.kinds); upNext = [:] }
     }
     /// Selected palette colors; empty means any color.
     @Published var palettes: Set<String> {
-        didSet { defaults.set(Array(palettes), forKey: Keys.palettes); upNext = [] }
+        didSet { defaults.set(Array(palettes), forKey: Keys.palettes); upNext = [:] }
     }
     @Published var hideNudity: Bool {
         didSet {
             defaults.set(hideNudity, forKey: Keys.hideNudity)
-            upNext = []
+            upNext = [:]
             // Swap out anything now hidden that's on screen.
             if hideNudity, current.contains(where: { $0.artwork.nude == true }) {
-                position = max(history.count - 1, 0)
+                skipToEnd()
                 next()
             }
         }
     }
     @Published var favoritesOnly: Bool {
-        didSet { defaults.set(favoritesOnly, forKey: Keys.favoritesOnly); upNext = [] }
+        didSet { defaults.set(favoritesOnly, forKey: Keys.favoritesOnly); upNext = [:] }
     }
     @Published var perDisplay: Bool {
         didSet {
             defaults.set(perDisplay, forKey: Keys.perDisplay)
-            upNext = []
-            position = max(history.count - 1, 0)  // always pick fresh art, not forward history
+            upNext = [:]
+            // Single mode carries on the first screen's track.
+            if !perDisplay { tracks = Array(tracks.prefix(1)); positions = Array(positions.prefix(1)) }
+            skipToEnd()  // always pick fresh art, not forward history
             next()
         }
+    }
+    @Published var swipeEnabled: Bool {
+        didSet { defaults.set(swipeEnabled, forKey: Keys.swipeEnabled) }
+    }
+    @Published var forceClickEnabled: Bool {
+        didSet { defaults.set(forceClickEnabled, forKey: Keys.forceClickEnabled) }
     }
     @Published var paused: Bool {
         didSet {
@@ -78,8 +93,11 @@ final class WallpaperController: ObservableObject {
         static let interval = "interval", kinds = "kinds", favoritesOnly = "favoritesOnly"
         static let perDisplay = "perDisplay", paused = "paused", favorites = "favorites"
         static let palettes = "palettes", hideNudity = "hideNudity"
-        static let frames = "frames", position = "position", lastChange = "lastChange"
-        static let launchAtLogin = "launchAtLogin"
+        static let tracks = "tracks", positions = "trackPositions", lastChange = "lastChange"
+        static let launchAtLogin = "launchAtLogin", swipeEnabled = "swipeEnabled"
+        static let forceClickEnabled = "forceClickEnabled"
+        // Before per-screen history: frames of ids shown together.
+        static let frames = "frames", position = "position"
     }
 
     private static let historyLimit = 50
@@ -93,19 +111,22 @@ final class WallpaperController: ObservableObject {
     private let byID: [String: Artwork]
     private let cache = ImageCache()
 
-    /// Each frame is the artwork ids shown together (one, or one per screen
-    /// in `NSScreen.screens` order), oldest first; `position` is on screen.
-    private var history: [[String]]
-    private var position: Int
+    /// Artwork ids per track, oldest first; `positions[t]` is on screen.
+    private var tracks: [[String]]
+    private var positions: [Int]
     private var lastChange: Date {
         didSet { defaults.set(lastChange, forKey: Keys.lastChange) }
     }
-    private var upNext: [Artwork] = []
-    private var currentFiles: [URL] = []
+    /// The next fresh pick for each track, downloaded ahead of time.
+    private var upNext: [Int: Artwork] = [:]
     private var loadTask: Task<Void, Never>?
     private var timer: Timer?
 
-    var canGoBack: Bool { position > 0 }
+    /// Whether `previous()` has anywhere to go, on every screen or one.
+    func canGoBack(screen: Int? = nil) -> Bool {
+        trackIndices(for: screen).contains { positions[$0] > 0 }
+    }
+    var canGoBack: Bool { canGoBack() }
 
     init() {
         let artworks = Manifest.loadBundled().artworks
@@ -120,11 +141,23 @@ final class WallpaperController: ObservableObject {
         favoritesOnly = defaults.bool(forKey: Keys.favoritesOnly)
         perDisplay = defaults.bool(forKey: Keys.perDisplay)
         paused = defaults.bool(forKey: Keys.paused)
-        favorites = Set(defaults.stringArray(forKey: Keys.favorites) ?? [])
-        history = ((defaults.array(forKey: Keys.frames) as? [[String]]) ?? [])
-            .map { $0.filter { byID[$0] != nil } }
-            .filter { !$0.isEmpty }
-        position = min(defaults.integer(forKey: Keys.position), max(history.count - 1, 0))
+        swipeEnabled = defaults.object(forKey: Keys.swipeEnabled) as? Bool ?? true
+        forceClickEnabled = defaults.object(forKey: Keys.forceClickEnabled) as? Bool ?? true
+        favorites = defaults.stringArray(forKey: Keys.favorites) ?? []
+
+        var tracks = (defaults.array(forKey: Keys.tracks) as? [[String]]) ?? []
+        var positions = (defaults.array(forKey: Keys.positions) as? [Int]) ?? []
+        if tracks.isEmpty, let frames = defaults.array(forKey: Keys.frames) as? [[String]], !frames.isEmpty {
+            // Split the old shared frames into one track per screen.
+            let width = frames.map(\.count).max() ?? 1
+            tracks = (0..<width).map { slot in frames.compactMap { $0.isEmpty ? nil : $0[slot % $0.count] } }
+            positions = Array(repeating: defaults.integer(forKey: Keys.position), count: width)
+        }
+        tracks = tracks.map { $0.filter { byID[$0] != nil } }
+        self.positions = tracks.indices.map { index in
+            min(positions.indices.contains(index) ? positions[index] : .max, max(tracks[index].count - 1, 0))
+        }
+        self.tracks = tracks
         lastChange = defaults.object(forKey: Keys.lastChange) as? Date ?? .distantPast
     }
 
@@ -153,7 +186,7 @@ final class WallpaperController: ObservableObject {
             Task { @MainActor in self?.tick() }
         }
 
-        if history.isEmpty || Date().timeIntervalSince(lastChange) >= interval.seconds && !paused {
+        if tracks.allSatisfy(\.isEmpty) || Date().timeIntervalSince(lastChange) >= interval.seconds && !paused {
             next()
         } else {
             showCurrent()
@@ -162,42 +195,87 @@ final class WallpaperController: ObservableObject {
 
     // MARK: - Navigation
 
-    func next(retriesLeft: Int = 2) {
-        if position < history.count - 1 {
-            position += 1
-            showCurrent()
-            return
+    /// Moves every screen on, or only `screen` in per-display mode. `then`
+    /// runs once the new wallpaper is set, or the change failed.
+    func next(screen: Int? = nil, retriesLeft: Int = 2, then: (() -> Void)? = nil) {
+        ensureTracks()
+        let before = positions
+        var fresh: Set<Int> = []
+        for track in trackIndices(for: screen) {
+            if positions[track] < tracks[track].count - 1 {
+                positions[track] += 1
+                continue
+            }
+            guard let artwork = takeUpNext(track) else {
+                status = "No artworks match your filters"
+                then?()
+                return
+            }
+            tracks[track].append(artwork.id)
+            if tracks[track].count > Self.historyLimit {
+                tracks[track].removeFirst(tracks[track].count - Self.historyLimit)
+            }
+            positions[track] = tracks[track].count - 1
+            fresh.insert(track)
         }
-        let frame = takeUpNext(frameSize)
-        guard !frame.isEmpty else {
-            status = "No artworks match your filters"
-            return
-        }
-        history.append(frame.map(\.id))
-        if history.count > Self.historyLimit {
-            history.removeFirst(history.count - Self.historyLimit)
-        }
-        position = history.count - 1
-        showCurrent(retriesLeft: retriesLeft)
+        showCurrent(fresh: fresh, retriesLeft: retriesLeft, restoring: before, then: then)
     }
 
-    func previous() {
-        guard canGoBack else { return }
-        position -= 1
-        showCurrent()
+    func previous(screen: Int? = nil, then: (() -> Void)? = nil) {
+        ensureTracks()
+        let movable = trackIndices(for: screen).filter { positions[$0] > 0 }
+        guard !movable.isEmpty else { then?(); return }
+        let before = positions
+        for track in movable { positions[track] -= 1 }
+        showCurrent(restoring: before, then: then)
+    }
+
+    /// Local files for the artwork `next(screen:)` or `previous(screen:)`
+    /// would show, one per screen (nil for screens it leaves alone),
+    /// downloading them if needed. Nil if there is nothing that way.
+    func neighborFiles(forward: Bool, screen: Int? = nil) async -> [URL?]? {
+        ensureTracks()
+        let moving = Set(trackIndices(for: screen))
+        var ids = trackIDs()
+        var changed = false
+        for track in moving {
+            let position = positions[track] + (forward ? 1 : -1)
+            if tracks[track].indices.contains(position) {
+                ids[track] = tracks[track][position]
+                changed = true
+            } else if forward {
+                prefetch()  // `next()` takes exactly these
+                if let artwork = upNext[track] {
+                    ids[track] = artwork.id
+                    changed = true
+                }
+            }
+        }
+        guard changed else { return nil }
+        let screens = NSScreen.screens
+        let jobs = jobs(for: ids, on: screens)
+        guard let files = try? await download(jobs.map { $0 }) else { return nil }
+        return screens.indices.map { index in moving.contains(trackIndex(forScreen: index)) ? files[index] : nil }
     }
 
     func isFavorite(_ artwork: Artwork) -> Bool {
         favorites.contains(artwork.id)
     }
 
+    static let favoritesLimit = 20
+
+    var favoriteArtworks: [Artwork] { favorites.compactMap { byID[$0] } }
+    var favoritesFull: Bool { favorites.count >= Self.favoritesLimit }
+
+    /// Adding does nothing once there are `favoritesLimit` favorites.
     func toggleFavorite(_ artwork: Artwork) {
-        if favorites.contains(artwork.id) {
-            favorites.remove(artwork.id)
-        } else {
-            favorites.insert(artwork.id)
+        if let index = favorites.firstIndex(of: artwork.id) {
+            favorites.remove(at: index)
+        } else if !favoritesFull {
+            favorites.insert(artwork.id, at: 0)
         }
-        defaults.set(Array(favorites), forKey: Keys.favorites)
+        defaults.set(favorites, forKey: Keys.favorites)
+        if favoritesOnly { upNext = [:] }
     }
 
     var showsAllKinds: Bool {
@@ -225,43 +303,73 @@ final class WallpaperController: ObservableObject {
         }
     }
 
-    // MARK: - Applying
+    // MARK: - Tracks
 
-    private var frameSize: Int { perDisplay ? max(NSScreen.screens.count, 1) : 1 }
+    private var trackCount: Int { perDisplay ? max(NSScreen.screens.count, 1) : 1 }
+
+    private func trackIndex(forScreen screen: Int) -> Int { perDisplay ? screen : 0 }
+
+    /// The tracks a change on `screen` moves: just its own in per-display
+    /// mode, otherwise every track.
+    private func trackIndices(for screen: Int?) -> [Int] {
+        let all = Array(0..<min(trackCount, tracks.count))
+        guard let screen, perDisplay, all.contains(screen) else { return all }
+        return [screen]
+    }
+
+    /// One track per screen in per-display mode; a newly plugged-in screen
+    /// starts with fresh art.
+    private func ensureTracks() {
+        while tracks.count < trackCount {
+            tracks.append([])
+            positions.append(0)
+        }
+        for track in 0..<trackCount where tracks[track].isEmpty {
+            let showing = Set(trackIDs().compactMap { $0 })
+            if let pick = pickRandom(1, excluding: showing).first {
+                tracks[track] = [pick.id]
+                positions[track] = 0
+            }
+        }
+    }
+
+    /// The id each track is showing, by track.
+    private func trackIDs() -> [String?] {
+        (0..<min(trackCount, tracks.count)).map { tracks[$0].indices.contains(positions[$0]) ? tracks[$0][positions[$0]] : nil }
+    }
+
+    private func skipToEnd() {
+        positions = tracks.map { max($0.count - 1, 0) }
+    }
+
+    // MARK: - Applying
 
     private func tick() {
         guard !paused, Date().timeIntervalSince(lastChange) >= interval.seconds else { return }
         next()
     }
 
-    /// Shows `history[position]`. With `retriesLeft > 0`, a failed download
-    /// drops that frame and tries different artworks instead.
-    private func showCurrent(retriesLeft: Int = 0) {
-        guard history.indices.contains(position) else { return }
-        // A display was plugged in since this frame was picked: give it art too.
-        if perDisplay, history[position].count < NSScreen.screens.count {
-            let extra = pickRandom(NSScreen.screens.count - history[position].count,
-                                   excluding: Set(history[position]))
-            history[position] += extra.map(\.id)
-        }
-        let frame = history[position].compactMap { byID[$0] }
-        guard !frame.isEmpty else { return }
-        defaults.set(history, forKey: Keys.frames)
-        defaults.set(position, forKey: Keys.position)
+    /// Shows what each track is on. With `retriesLeft > 0`, a failed
+    /// download drops the `fresh` picks and tries different artworks instead;
+    /// after that, history goes back to `restoring` so it matches the screen.
+    private func showCurrent(fresh: Set<Int> = [], retriesLeft: Int = 0, restoring: [Int]? = nil,
+                             then: (() -> Void)? = nil) {
+        ensureTracks()
+        let ids = trackIDs()
+        guard ids.allSatisfy({ $0 != nil }), !ids.isEmpty else { then?(); return }
+        defaults.set(tracks, forKey: Keys.tracks)
+        defaults.set(positions, forKey: Keys.positions)
 
         let screens = NSScreen.screens
-        let largest = Self.largestPixelSize(of: screens)
-        // Single mode uses one file sized for the largest screen everywhere.
-        let jobs: [(Artwork, CGSize)] = screens.enumerated().map { index, screen in
-            perDisplay ? (frame[index % frame.count], Self.pixelSize(of: screen)) : (frame[0], largest)
-        }
+        let jobs = jobs(for: ids, on: screens)
 
         loadTask?.cancel()
         loadTask = Task {
             do {
                 let files = try await download(jobs)
                 try Task.checkCancellation()
-                for (screen, file) in zip(screens, files) {
+                for (index, (screen, file)) in zip(screens, files).enumerated()
+                    where !currentFiles.indices.contains(index) || currentFiles[index] != file {
                     try NSWorkspace.shared.setDesktopImageURL(file, for: screen, options: Self.wallpaperOptions)
                 }
                 currentFiles = files
@@ -269,23 +377,53 @@ final class WallpaperController: ObservableObject {
                     ? zip(screens, jobs).enumerated().map { index, pair in
                         Showing(id: index, screenName: Self.label(for: pair.0, among: screens), artwork: pair.1.0)
                     }
-                    : [Showing(id: 0, screenName: "", artwork: frame[0])]
+                    : jobs.first.map { [Showing(id: 0, screenName: "", artwork: $0.0)] } ?? []
                 lastChange = Date()
                 status = nil
                 prefetch()
+                then?()
             } catch {
                 // Superseded by a newer load (URLSession throws URLError.cancelled).
-                if Task.isCancelled { return }
-                NSLog("Easel: failed to show \(frame.map(\.id)): \(error)")
-                if retriesLeft > 0 {
-                    history.remove(at: position)
-                    position = max(history.count - 1, 0)
-                    upNext = []
-                    next(retriesLeft: retriesLeft - 1)
+                if Task.isCancelled { then?(); return }
+                NSLog("Easel: failed to show \(ids): \(error)")
+                if retriesLeft > 0, !fresh.isEmpty {
+                    for track in fresh {
+                        tracks[track].remove(at: positions[track])
+                        positions[track] = max(tracks[track].count - 1, 0)
+                        upNext[track] = nil
+                    }
+                    let screen = fresh.count == 1 && perDisplay ? fresh.first : nil
+                    if screen == nil, let restoring, restoring.count == positions.count {
+                        // The retry moves every track again, so undo the ones that moved.
+                        for track in positions.indices where !fresh.contains(track) {
+                            positions[track] = restoring[track]
+                        }
+                    }
+                    next(screen: screen, retriesLeft: retriesLeft - 1, then: then)
                 } else {
+                    for track in fresh where !tracks[track].isEmpty {
+                        tracks[track].removeLast()
+                    }
+                    if let restoring, restoring.count == positions.count {
+                        positions = zip(restoring, tracks).map { min($0, max($1.count - 1, 0)) }
+                    }
+                    defaults.set(tracks, forKey: Keys.tracks)
+                    defaults.set(positions, forKey: Keys.positions)
                     status = "Offline — couldn't load artwork"
+                    then?()
                 }
             }
+        }
+    }
+
+    /// What to download, one job per screen. Single mode uses one file sized
+    /// for the largest screen everywhere.
+    private func jobs(for ids: [String?], on screens: [NSScreen]) -> [(Artwork, CGSize)] {
+        let largest = Self.largestPixelSize(of: screens)
+        return screens.indices.compactMap { index in
+            let track = trackIndex(forScreen: index)
+            guard ids.indices.contains(track), let id = ids[track], let artwork = byID[id] else { return nil }
+            return (artwork, perDisplay ? Self.pixelSize(of: screens[index]) : largest)
         }
     }
 
@@ -310,27 +448,29 @@ final class WallpaperController: ObservableObject {
         }
     }
 
-    /// Download the next frame ahead of time so rotation is instant.
+    /// Pick and download each track's next artwork ahead of time so
+    /// rotation is instant.
     private func prefetch() {
-        guard upNext.isEmpty else { return }
         let screens = NSScreen.screens
-        upNext = pickRandom(frameSize, excluding: [])
-        let sizes = perDisplay ? screens.map(Self.pixelSize(of:)) : [Self.largestPixelSize(of: screens)]
-        for (artwork, size) in zip(upNext, sizes) {
-            Task { _ = try? await cache.file(for: artwork, covering: size) }
+        for track in 0..<trackCount where upNext[track] == nil {
+            let taken = Set(upNext.values.map(\.id))
+            guard let pick = pickRandom(1, excluding: taken).first else { continue }
+            upNext[track] = pick
+            let size = perDisplay && screens.indices.contains(track)
+                ? Self.pixelSize(of: screens[track]) : Self.largestPixelSize(of: screens)
+            Task { _ = try? await cache.file(for: pick, covering: size) }
         }
     }
 
-    private func takeUpNext(_ count: Int) -> [Artwork] {
-        let ready = upNext.count == count ? upNext : []
-        upNext = []
-        return ready.isEmpty ? pickRandom(count, excluding: []) : ready
+    private func takeUpNext(_ track: Int) -> Artwork? {
+        defer { upNext[track] = nil }
+        return upNext[track] ?? pickRandom(1, excluding: Set(trackIDs().compactMap { $0 })).first
     }
 
     /// `count` distinct artworks matching the filters, avoiding recent ones
     /// when the pool is big enough.
     private func pickRandom(_ count: Int, excluding: Set<String>) -> [Artwork] {
-        let recent = Set(history.suffix(Self.historyLimit).joined()).union(excluding)
+        let recent = Set(tracks.flatMap { $0.suffix(Self.historyLimit) }).union(excluding)
         let pool = artworks.filter {
             enabledKinds.contains($0.kind)
                 && (!favoritesOnly || favorites.contains($0.id))

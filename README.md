@@ -35,7 +35,11 @@
 - Filter by kind (paintings, drawings, prints, photographs, sculpture) and by
   dominant color
 - Hide nudity (on by default), using NGA's tags plus CLIP image analysis
-- Favorites, previous/next, launch at login
+- Swipe sideways with two fingers on the desktop to change the artwork on
+  that screen
+- Force Click the desktop for the artwork's label: title, artist, date and
+  medium (needs the Input Monitoring permission)
+- Favorites (up to 20), previous/next, launch at login
 - Universal binary (Apple Silicon + Intel), macOS 13+
 
 ## Install
