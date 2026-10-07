@@ -18,9 +18,9 @@ mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/$APP_NAME"
 # Debug symbols are only useful to developers; stripping halves the binary.
 strip -x "$APP/Contents/MacOS/$APP_NAME"
-# The artwork list ships compressed (5.6 MB → under 1 MB); the app unpacks it
-# at launch in a few tens of milliseconds.
-swift scripts/compress.swift Resources/manifest.json "$APP/Contents/Resources/manifest.json.lzma"
+# The artwork list ships as a compact, compressed catalog that the app keeps
+# packed in memory (see Sources/OpenGallery/Catalog.swift).
+swift scripts/pack_catalog.swift Resources/manifest.json "$APP/Contents/Resources/catalog.bin.lzma"
 [ -f Resources/AppIcon.icns ] && cp Resources/AppIcon.icns "$APP/Contents/Resources/"
 
 cat > "$APP/Contents/Info.plist" <<PLIST

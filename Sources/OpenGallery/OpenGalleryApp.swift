@@ -26,6 +26,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private lazy var card = ArtworkCardPresenter(controller: controller)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        // ImageCache keeps downloads on disk; the network layer needn't.
+        URLCache.shared = URLCache(memoryCapacity: 0, diskCapacity: 0, directory: nil)
         controller.start()
         swiper.start()
         card.start()

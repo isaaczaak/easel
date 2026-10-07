@@ -1,6 +1,6 @@
 import AppKit
 
-struct Artwork: Codable, Identifiable, Hashable {
+struct Artwork: Identifiable, Hashable {
     let id: String
     let w: Int
     let h: Int
@@ -30,6 +30,10 @@ struct Artwork: Codable, Identifiable, Hashable {
 
     /// Pixel width that covers a screen of `pixelSize` once the wallpaper is
     /// scaled to fill (the excess is cropped). Never larger than the original.
+    /// Landscape artworks fill the screen; narrower ones are shown whole on a
+    /// gallery wall (GalleryWall).
+    var fillsScreen: Bool { Double(w) / Double(h) >= 1.2 }
+
     func imageWidth(covering pixelSize: CGSize) -> Int {
         let scale = max(pixelSize.width / CGFloat(w), pixelSize.height / CGFloat(h))
         return min(w, Int((CGFloat(w) * scale).rounded(.up)))
@@ -60,33 +64,6 @@ struct Artwork: Codable, Identifiable, Hashable {
     }
 }
 
-struct Manifest: Codable {
-    let version: Int
-    let artworks: [Artwork]
-
-    static func loadBundled() -> Manifest {
-        guard let data = bundledData(),
-              let manifest = try? JSONDecoder().decode(Manifest.self, from: data)
-        else {
-            NSLog("OpenGallery: bundled manifest missing or invalid")
-            return Manifest(version: 0, artworks: [])
-        }
-        // Ids become file names and URL paths, so allow only UUIDs.
-        return Manifest(version: manifest.version, artworks: manifest.artworks.filter { UUID(uuidString: $0.id) != nil })
-    }
-
-    /// The manifest JSON: compressed in the app bundle (see scripts/bundle.sh),
-    /// plain when run during development.
-    private static func bundledData() -> Data? {
-        if let url = Bundle.main.url(forResource: "manifest.json", withExtension: "lzma"),
-           let compressed = NSData(contentsOf: url) {
-            return try? compressed.decompressed(using: .lzma) as Data
-        }
-        guard let url = Bundle.main.url(forResource: "manifest", withExtension: "json") else { return nil }
-        return try? Data(contentsOf: url)
-    }
-}
-
 /// Classifications offered as filters, in menu order.
 enum ArtKind: String, CaseIterable, Identifiable {
     case painting, drawing, print, photograph, sculpture
@@ -96,6 +73,28 @@ enum ArtKind: String, CaseIterable, Identifiable {
 }
 
 /// Dominant-color filters, in menu order.
+/// Which shapes of artwork to show.
+enum Orientation: String, CaseIterable, Identifiable {
+    case any, landscape, portrait
+
+    var id: String { rawValue }
+    var label: String {
+        switch self {
+        case .any: return "Any"
+        case .landscape: return "Landscape"
+        case .portrait: return "Portrait & square"
+        }
+    }
+
+    func includes(fillsScreen: Bool) -> Bool {
+        switch self {
+        case .any: return true
+        case .landscape: return fillsScreen
+        case .portrait: return !fillsScreen
+        }
+    }
+}
+
 /// Art movements, in historical order. Raw values are NGA's style terms.
 enum ArtMovement: String, CaseIterable, Identifiable {
     case renaissance = "Renaissance", baroque = "Baroque", rococo = "Rococo"

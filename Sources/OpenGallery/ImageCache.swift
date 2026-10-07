@@ -3,8 +3,9 @@ import Foundation
 /// Downloads artwork images into ~/Library/Caches and keeps the newest few.
 final class ImageCache {
     private let directory: URL
-    /// How many downloaded images to keep.
-    private let limit = 20
+    /// How many downloaded images to keep: enough for a few ready ahead and
+    /// recent history on two displays.
+    private let limit = 30
 
     /// Where downloaded artwork lives.
     static var directory: URL {
@@ -18,26 +19,33 @@ final class ImageCache {
     }
 
     /// Local file for `artwork` sized for `pixelSize`, downloading it if needed.
+    /// Portrait and square works come back already hung on a gallery wall.
     /// The filename includes the size so a new display gets a fresh file (macOS
     /// caches wallpapers by path).
     func file(for artwork: Artwork, covering pixelSize: CGSize) async throws -> URL {
-        let width = artwork.imageWidth(covering: pixelSize)
-        let remote = artwork.imageURL(width: width)
-        let local = directory.appendingPathComponent("\(artwork.id)-\(width).jpg")
+        let hung = !artwork.fillsScreen
+        let width = hung ? GalleryWall.imageWidth(of: artwork, on: pixelSize) : artwork.imageWidth(covering: pixelSize)
+        let name = hung ? "\(artwork.id)-wall-\(Int(pixelSize.width))x\(Int(pixelSize.height))" : "\(artwork.id)-\(width)"
+        let local = directory.appendingPathComponent(name + ".jpg")
 
         if FileManager.default.fileExists(atPath: local.path) {
             try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: local.path)
             return local
         }
 
-        let (temp, response) = try await URLSession.shared.download(from: remote)
+        let (temp, response) = try await URLSession.shared.download(from: artwork.imageURL(width: width))
+        defer { try? FileManager.default.removeItem(at: temp) }
         guard let http = response as? HTTPURLResponse, http.statusCode == 200,
               http.mimeType == "image/jpeg"
         else {
             throw URLError(.badServerResponse)
         }
         try? FileManager.default.removeItem(at: local)
-        try FileManager.default.moveItem(at: temp, to: local)
+        if hung {
+            try GalleryWall.render(temp, size: pixelSize, to: local)
+        } else {
+            try FileManager.default.moveItem(at: temp, to: local)
+        }
         prune(keeping: local)
         return local
     }

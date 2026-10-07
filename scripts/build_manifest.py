@@ -2,9 +2,10 @@
 """Build the wallpaper manifest from the National Gallery of Art open data.
 
 Downloads objects.csv, published_images.csv and related tables from
-github.com/NationalGalleryOfArt/opendata, keeps open-access, primary-view,
-landscape images that are large enough for a desktop, and writes a compact
-JSON manifest the app reads.
+github.com/NationalGalleryOfArt/opendata, keeps open-access, primary-view
+images that are large enough for a desktop, and writes a compact JSON
+manifest the app reads. Landscape images fill the screen; the app shows
+portrait and square ones whole, on a gallery wall.
 
 Usage: scripts/build_manifest.py [--data-dir DIR] [--out PATH]
 """
@@ -21,9 +22,12 @@ import uuid
 DATA_URL = "https://raw.githubusercontent.com/NationalGalleryOfArt/opendata/main/data/"
 IIIF_PREFIX = "https://api.nga.gov/iiif/"
 
-MIN_ASPECT = 1.2  # width / height; screens are ~1.6, the app crops the rest
-MIN_WIDTH = 2000  # px; anything smaller looks soft on a Retina display
+MIN_SIZE = 2000  # px on the long side; anything smaller looks soft on a Retina display
 NUDITY_THRESHOLD = 0.5  # CLIP score from scripts/detect_nudity.py
+# Works with nudity that neither NGA's tags nor CLIP catch, by object id.
+NUDE_BY_HAND = {
+    46471,  # Watson and the Shark, John Singleton Copley
+}
 # Art movements the app can filter by (ArtMovement in Artwork.swift): NGA's
 # "Style" terms, leaving out furniture and regional styles.
 MOVEMENTS = {"Renaissance", "Baroque", "Rococo", "Neoclassic", "Romantic", "Realist",
@@ -74,7 +78,7 @@ def main():
                 width, height = int(row["width"]), int(row["height"])
             except ValueError:
                 continue
-            if height == 0 or width / height < MIN_ASPECT or width < MIN_WIDTH:
+            if height == 0 or max(width, height) < MIN_SIZE:
                 continue
 
             obj = objects.get(row["depictstmsobjectid"])
@@ -121,7 +125,8 @@ def main():
         with open(nudity_path, encoding="utf-8") as f:
             scores = json.load(f)
     for artwork in artworks:
-        if artwork["oid"] in nude_objects or scores.get(artwork["id"], 0) >= NUDITY_THRESHOLD:
+        if (artwork["oid"] in nude_objects or artwork["oid"] in NUDE_BY_HAND
+                or scores.get(artwork["id"], 0) >= NUDITY_THRESHOLD):
             artwork["nude"] = True
         if artwork["oid"] in movements:
             artwork["movements"] = sorted(set(movements[artwork["oid"]]))

@@ -6,7 +6,7 @@
 
 <p align="center">
   OpenGallery turns your desktop into a gallery. It sets your wallpaper to one of
-  20,000 public-domain works from the
+  60,000 public-domain works from the
   <a href="https://www.nga.gov/artworks/free-images-and-open-access">National Gallery of Art</a>,
   at full resolution on every screen.
 </p>
@@ -20,7 +20,7 @@
 </p>
 
 <p align="center">
-  Made by Isaac Ng · <a href="https://isaac.fyi">isaac.fyi</a> · <a href="https://x.com/isaaccyn">@isaaccyn</a>
+  Made by <a href="https://x.com/isaaccyn">Isaac Ng</a>
 </p>
 
 <p align="center">
@@ -52,6 +52,20 @@ medium.
 back.
 
 OpenGallery runs on Apple Silicon and Intel Macs with macOS 13 or later.
+
+## How it works
+
+**Downloads:** Each image downloads only when it's about to show, sized for
+your screen.
+
+**Storage:** About 60 MB in `~/Library/Caches`, which macOS can clear when it
+needs space.
+
+**Memory:** Around 45 MB.
+
+**Privacy:** OpenGallery only connects to the National Gallery of Art's image
+server and collects no data about you. Force Click reads trackpad pressure on
+the desktop and nothing else.
 
 ## Install
 
@@ -119,11 +133,30 @@ Don't use sudo, and don't change any other system or privacy settings.
 
 ## Development
 
+```mermaid
+flowchart LR
+    subgraph build["Build time"]
+        data["NGA open data"] --> scripts["Artwork list scripts<br>tags, colors, nudity"]
+        scripts --> catalog["Packed catalog"]
+    end
+    subgraph app["OpenGallery"]
+        catalog --> pick["Pick an artwork<br>filters, history"]
+        pick --> cache["Download and cache<br>gallery wall for portraits"]
+        cache --> wallpaper["Desktop wallpaper"]
+        swipe["Swipe"] --> pick
+        force["Force Click"] --> card["Details card"]
+        catalog --> card
+    end
+    iiif["NGA image server"] --> cache
+```
+
 ### Artwork list
 
 `scripts/build_manifest.py` builds `Resources/manifest.json` from the
-Gallery's open data. It keeps open-access, landscape images at least 2000px
-wide. Two more scripts tag the artwork and then rebuild the list:
+Gallery's open data. It keeps open-access images at least 2000px on the long
+side. Landscape works fill the screen; the app shows portrait and square works
+whole, on a gallery wall. Two more scripts tag the artwork and then rebuild
+the list:
 
 ```bash
 scripts/build_manifest.py

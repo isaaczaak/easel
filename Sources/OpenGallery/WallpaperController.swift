@@ -53,6 +53,9 @@ final class WallpaperController: ObservableObject {
     @Published var palettes: Set<String> {
         didSet { defaults.set(Array(palettes), forKey: Keys.palettes); upNext = [:] }
     }
+    @Published var orientation: Orientation {
+        didSet { defaults.set(orientation.rawValue, forKey: Keys.orientation); upNext = [:] }
+    }
     /// Selected art movements; empty means any (including untagged works).
     @Published var movements: Set<String> {
         didSet { defaults.set(Array(movements), forKey: Keys.movements); upNext = [:] }
@@ -120,6 +123,7 @@ final class WallpaperController: ObservableObject {
         static let interval = "interval", kinds = "kinds", favoritesOnly = "favoritesOnly"
         static let perDisplay = "perDisplay", paused = "paused", favorites = "favorites"
         static let palettes = "palettes", hideNudity = "hideNudity", movements = "movements"
+        static let orientation = "orientation"
         static let tracks = "tracks", positions = "trackPositions", lastChange = "lastChange"
         static let launchAtLogin = "launchAtLogin", swipeEnabled = "swipeEnabled"
         static let forceClickEnabled = "forceClickEnabled", isOn = "isOn"
@@ -133,8 +137,7 @@ final class WallpaperController: ObservableObject {
     ]
 
     private let defaults = UserDefaults.standard
-    private let artworks: [Artwork]
-    private let byID: [String: Artwork]
+    private let catalog: Catalog
     private let cache = ImageCache()
 
     /// Artwork ids per track, oldest first; `positions[t]` is on screen.
@@ -144,7 +147,10 @@ final class WallpaperController: ObservableObject {
         didSet { defaults.set(lastChange, forKey: Keys.lastChange) }
     }
     /// The next fresh pick for each track, downloaded ahead of time.
-    private var upNext: [Int: Artwork] = [:]
+    /// The next few fresh picks for each track, downloaded ahead of time so
+    /// rotating or swiping never waits on the network.
+    private var upNext: [Int: [Artwork]] = [:]
+    private static let readyAhead = 3
     private var loadTask: Task<Void, Never>?
     private var timer: Timer?
 
@@ -160,15 +166,14 @@ final class WallpaperController: ObservableObject {
     }
 
     init() {
-        let artworks = Manifest.loadBundled().artworks
-        let byID = Dictionary(artworks.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        self.artworks = artworks
-        self.byID = byID
+        let catalog = Catalog.loadBundled()
+        self.catalog = catalog
 
         interval = RotationInterval(rawValue: defaults.integer(forKey: Keys.interval)) ?? .hour
         enabledKinds = Set(defaults.stringArray(forKey: Keys.kinds) ?? [ArtKind.painting.rawValue])
         palettes = Set(defaults.stringArray(forKey: Keys.palettes) ?? [])
         movements = Set(defaults.stringArray(forKey: Keys.movements) ?? [])
+        orientation = Orientation(rawValue: defaults.string(forKey: Keys.orientation) ?? "") ?? .any
         hideNudity = defaults.object(forKey: Keys.hideNudity) as? Bool ?? true
         favoritesOnly = defaults.bool(forKey: Keys.favoritesOnly)
         perDisplay = defaults.bool(forKey: Keys.perDisplay)
@@ -179,7 +184,7 @@ final class WallpaperController: ObservableObject {
         isOn = defaults.object(forKey: Keys.isOn) as? Bool ?? true
         favorites = defaults.stringArray(forKey: Keys.favorites) ?? []
 
-        let tracks = ((defaults.array(forKey: Keys.tracks) as? [[String]]) ?? []).map { $0.filter { byID[$0] != nil } }
+        let tracks = ((defaults.array(forKey: Keys.tracks) as? [[String]]) ?? []).map { $0.filter { catalog.index(of: $0) != nil } }
         let positions = (defaults.array(forKey: Keys.positions) as? [Int]) ?? []
         self.positions = tracks.indices.map { index in
             min(positions.indices.contains(index) ? positions[index] : .max, max(tracks[index].count - 1, 0))
@@ -285,7 +290,7 @@ final class WallpaperController: ObservableObject {
                 changed = true
             } else if forward {
                 prefetch()  // `next()` takes exactly these
-                if let artwork = upNext[track] {
+                if let artwork = upNext[track]?.first {
                     ids[track] = artwork.id
                     changed = true
                 }
@@ -303,7 +308,7 @@ final class WallpaperController: ObservableObject {
 
     static let favoritesLimit = 20
 
-    var favoriteArtworks: [Artwork] { favorites.compactMap { byID[$0] } }
+    var favoriteArtworks: [Artwork] { favorites.compactMap(catalog.artwork(id:)) }
     var favoritesFull: Bool { favorites.count >= Self.favoritesLimit }
 
     /// Adding does nothing once there are `favoritesLimit` favorites.
@@ -344,11 +349,14 @@ final class WallpaperController: ObservableObject {
 
     /// How many artworks of the enabled kinds are tagged with each movement.
     var movementCounts: [String: Int] {
-        var counts: [String: Int] = [:]
-        for artwork in artworks where enabledKinds.contains(artwork.kind) {
-            for movement in artwork.movements ?? [] { counts[movement, default: 0] += 1 }
+        let kinds = Catalog.mask(enabledKinds, in: catalog.kinds)
+        var counts = [Int](repeating: 0, count: catalog.movements.count)
+        for i in 0..<catalog.count
+        where kinds & (1 << UInt16(catalog.kind(at: i))) != 0 && orientation.includes(fillsScreen: catalog.fillsScreen(at: i)) {
+            let mask = catalog.movementMask(at: i)
+            for bit in counts.indices where mask & (1 << UInt16(bit)) != 0 { counts[bit] += 1 }
         }
-        return counts
+        return Dictionary(uniqueKeysWithValues: zip(catalog.movements, counts))
     }
 
     func setPalette(_ color: PaletteColor, enabled: Bool) {
@@ -479,7 +487,7 @@ final class WallpaperController: ObservableObject {
         let largest = Self.largestPixelSize(of: screens)
         return screens.indices.compactMap { index in
             let track = trackIndex(forScreen: index)
-            guard ids.indices.contains(track), let id = ids[track], let artwork = byID[id] else { return nil }
+            guard ids.indices.contains(track), let id = ids[track], let artwork = catalog.artwork(id: id) else { return nil }
             return (artwork, perDisplay ? screens[index].pixelSize : largest)
         }
     }
@@ -556,34 +564,65 @@ final class WallpaperController: ObservableObject {
     /// rotation is instant.
     private func prefetch() {
         let screens = NSScreen.screens
-        for track in 0..<trackCount where upNext[track] == nil {
-            let taken = Set(upNext.values.map(\.id))
-            guard let pick = pickOne(excluding: taken) else { continue }
-            upNext[track] = pick
+        for track in 0..<trackCount {
+            var queue = upNext[track] ?? []
+            var added: [Artwork] = []
+            while queue.count < Self.readyAhead {
+                let taken = Set(upNext.values.joined().map(\.id) + queue.map(\.id) + trackIDs().compactMap { $0 })
+                guard let pick = pickOne(excluding: taken) else { break }
+                queue.append(pick)
+                added.append(pick)
+            }
+            upNext[track] = queue
+            guard !added.isEmpty else { continue }
             let size = perDisplay && screens.indices.contains(track)
                 ? screens[track].pixelSize : Self.largestPixelSize(of: screens)
-            Task { _ = try? await cache.file(for: pick, covering: size) }
+            let cache = cache, fetch = added
+            Task {  // in order, so the next one is ready first
+                for artwork in fetch { _ = try? await cache.file(for: artwork, covering: size) }
+            }
         }
     }
 
     private func takeUpNext(_ track: Int) -> Artwork? {
-        defer { upNext[track] = nil }
-        return upNext[track] ?? pickOne(excluding: Set(trackIDs().compactMap { $0 }))
+        if var queue = upNext[track], !queue.isEmpty {
+            let next = queue.removeFirst()
+            upNext[track] = queue
+            return next
+        }
+        return pickOne(excluding: Set(trackIDs().compactMap { $0 }))
     }
 
     /// A random artwork matching the filters, other than `excluding`,
     /// avoiding recent ones when the pool is big enough.
     private func pickOne(excluding: Set<String>) -> Artwork? {
-        let recent = Set(tracks.flatMap { $0.suffix(Self.historyLimit) }).union(excluding)
-        let pool = artworks.filter {
-            enabledKinds.contains($0.kind)
-                && (!favoritesOnly || favorites.contains($0.id))
-                && (palettes.isEmpty || !palettes.isDisjoint(with: $0.palette ?? []))
-                && (movements.isEmpty || !movements.isDisjoint(with: $0.movements ?? []))
-                && !(hideNudity && $0.nude == true)
+        let excluded = Set(excluding.compactMap(catalog.index(of:)))
+        let recent = excluded.union(tracks.flatMap { $0.suffix(Self.historyLimit) }.compactMap(catalog.index(of:)))
+        let favorite = favoritesOnly ? Set(favorites.compactMap(catalog.index(of:))) : []
+        let kinds = Catalog.mask(enabledKinds, in: catalog.kinds)
+        let colors = Catalog.mask(palettes, in: catalog.palettes)
+        let styles = Catalog.mask(movements, in: catalog.movements)
+
+        // One pass, picking uniformly among matches (reservoir sampling), so
+        // no list of candidates is built.
+        var fresh: Int?, freshSeen = 0, fallback: Int?, fallbackSeen = 0
+        for i in 0..<catalog.count {
+            guard kinds & (1 << UInt16(catalog.kind(at: i))) != 0,
+                  orientation.includes(fillsScreen: catalog.fillsScreen(at: i)),
+                  !favoritesOnly || favorite.contains(i),
+                  palettes.isEmpty || catalog.paletteMask(at: i) & colors != 0,
+                  movements.isEmpty || catalog.movementMask(at: i) & styles != 0,
+                  !(hideNudity && catalog.isNude(at: i)),
+                  !excluded.contains(i)
+            else { continue }
+            fallbackSeen += 1
+            if Int.random(in: 0..<fallbackSeen) == 0 { fallback = i }
+            if !recent.contains(i) {
+                freshSeen += 1
+                if Int.random(in: 0..<freshSeen) == 0 { fresh = i }
+            }
         }
-        return pool.filter { !recent.contains($0.id) }.randomElement()
-            ?? pool.filter { !excluding.contains($0.id) }.randomElement()
+        return (fresh ?? fallback).map(catalog.artwork(at:))
     }
 
     /// The display's name, shortened for the built-in screen. Identical

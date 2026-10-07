@@ -31,6 +31,11 @@ final class DesktopSwiper {
     /// The screen being swiped, in `NSScreen.screens` order.
     private var screenIndex = 0
 
+    /// Images decoded as soon as fingers land, so a swipe shows from its
+    /// first frame. Held only during a gesture, then released.
+    private var ready: [URL: CGImage] = [:]
+    private var readying: Task<Void, Never>?
+
     /// A two-finger scroll that started over the desktop but hasn't yet
     /// shown whether it's horizontal.
     private var pendingScroll: (dx: CGFloat, dy: CGFloat)?
@@ -93,7 +98,7 @@ final class DesktopSwiper {
             }
         case .ended, .cancelled:
             pendingScroll = nil
-            if phase == .tracking { end() }
+            if phase == .tracking { end() } else if phase == .idle { releaseReady() }
         default:
             break
         }
@@ -187,7 +192,7 @@ final class DesktopSwiper {
         let moving = controller.perDisplay ? [screenIndex] : Array(screens.indices)
         stages = moving.filter { current.indices.contains($0) && screens.indices.contains($0) }.map { index in
             let stage = Stage(screen: screens[index], index: index)
-            stage.load(current[index], into: stage.current, visibleWhenReady: true)
+            stage.load(current[index], into: stage.current, visibleWhenReady: true, ready: ready[current[index]])
             return stage
         }
         let newStages = stages
@@ -197,7 +202,8 @@ final class DesktopSwiper {
                 guard let files = await self?.controller.neighborFiles(forward: forward, screen: screen) else { return }
                 for stage in newStages where files.indices.contains(stage.index) {
                     guard let file = files[stage.index] else { continue }
-                    stage.load(file, into: forward ? stage.next : stage.previous, visibleWhenReady: false)
+                    stage.load(file, into: forward ? stage.next : stage.previous, visibleWhenReady: false,
+                               ready: self?.ready[file])
                 }
             }
         }
@@ -225,7 +231,16 @@ final class DesktopSwiper {
         old.forEach { $0.close() }
         let wasCurrent = !old.isEmpty && old.allSatisfy { stages.contains($0) }
         stages.removeAll { old.contains($0) }
-        if wasCurrent, phase == .settling { phase = .idle }
+        if wasCurrent, phase == .settling {
+            phase = .idle
+            releaseReady()
+        }
+    }
+
+    private func releaseReady() {
+        readying?.cancel()
+        readying = nil
+        ready = [:]
     }
 
     private func removeStages() {
@@ -233,11 +248,31 @@ final class DesktopSwiper {
         stages = []
     }
 
-    /// Decode nothing yet, but make sure the next artwork is downloading
-    /// as soon as a swipe might start.
+    /// Fingers just landed on the desktop: decode the images a swipe would
+    /// show, so it can start on its first frame.
     private func warmUp() {
-        let screen = Desktop.screenUnderPointer().flatMap { NSScreen.screens.firstIndex(of: $0) }
-        Task { _ = await controller.neighborFiles(forward: true, screen: screen) }
+        let screens = NSScreen.screens
+        guard let pointer = Desktop.screenUnderPointer(), let screen = screens.firstIndex(of: pointer) else { return }
+        let moving = controller.perDisplay ? [screen] : Array(screens.indices)
+        let current = controller.currentFiles
+        readying?.cancel()
+        readying = Task { [weak self] in
+            guard let self else { return }
+            var files: [(URL, CGSize)] = moving.compactMap { i in
+                current.indices.contains(i) ? (current[i], screens[i].pixelSize) : nil
+            }
+            for forward in [true, false] {
+                guard let neighbors = await self.controller.neighborFiles(forward: forward, screen: screen) else { continue }
+                files += moving.compactMap { i in
+                    neighbors.indices.contains(i) ? neighbors[i].map { ($0, screens[i].pixelSize) } : nil
+                }
+            }
+            for (file, size) in files where self.ready[file] == nil {
+                let image = await Task.detached(priority: .userInitiated) { Stage.decode(file, covering: size) }.value
+                if Task.isCancelled { return }
+                self.ready[file] = image
+            }
+        }
     }
 }
 
@@ -306,7 +341,17 @@ private final class Stage: NSWindow {
     }
 
     /// Decodes `file` off the main thread at screen size and shows it.
-    func load(_ file: URL, into layer: CALayer, visibleWhenReady: Bool, then: (() -> Void)? = nil) {
+    func load(_ file: URL, into layer: CALayer, visibleWhenReady: Bool, ready: CGImage? = nil,
+              then: (() -> Void)? = nil) {
+        if let ready {  // decoded while the fingers settled on the trackpad
+            CATransaction.begin()
+            CATransaction.setDisableActions(true)
+            layer.contents = ready
+            CATransaction.commit()
+            if visibleWhenReady { alphaValue = 1 }
+            then?()
+            return
+        }
         let size = pixelSize
         Task.detached(priority: .userInitiated) {
             let image = Self.decode(file, covering: size)
@@ -322,7 +367,7 @@ private final class Stage: NSWindow {
     }
 
     /// The image scaled down just enough to still fill `size` when cropped.
-    nonisolated private static func decode(_ file: URL, covering size: CGSize) -> CGImage? {
+    nonisolated static func decode(_ file: URL, covering size: CGSize) -> CGImage? {
         guard let source = CGImageSourceCreateWithURL(file as CFURL, nil),
               let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = props[kCGImagePropertyPixelWidth] as? CGFloat,

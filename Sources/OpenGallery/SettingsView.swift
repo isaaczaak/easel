@@ -126,7 +126,33 @@ private struct ArtworkSettings: View {
                 }
             }
             Section {
-                MovementPicker(controller: controller)
+                Picker("Orientation", selection: $controller.orientation) {
+                    ForEach(Orientation.allCases) { Text($0.label).tag($0) }
+                }
+            } footer: {
+                Text("Landscape works fill the screen. Portrait and square works hang whole on a gallery wall.")
+                    .foregroundStyle(.secondary)
+            }
+            Section {
+                Toggle("Any movement", isOn: Binding(
+                    get: { controller.movements.isEmpty },
+                    set: { if $0 { controller.movements = [] } }
+                ))
+                let counts = controller.movementCounts
+                LazyVGrid(columns: columns, spacing: 8) {
+                    ForEach(ArtMovement.allCases) { movement in
+                        Toggle(isOn: Binding(
+                            get: { controller.movements.contains(movement.rawValue) },
+                            set: { controller.setMovement(movement, enabled: $0) }
+                        )) {
+                            Text(movement.rawValue)
+                                + Text(" \(counts[movement.rawValue, default: 0].formatted())").foregroundColor(.secondary)
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                }
+            } header: {
+                Text("Art movement")
             } footer: {
                 Text("Only some works are tagged with a movement, so choosing one narrows the selection.")
                     .foregroundStyle(.secondary)
@@ -168,40 +194,6 @@ private struct ArtworkSettings: View {
         }
         .formStyle(.grouped)
         .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-/// One row with a drop-down of movements to tick, instead of a long grid.
-private struct MovementPicker: View {
-    @ObservedObject var controller: WallpaperController
-
-    private var summary: String {
-        let chosen = ArtMovement.allCases.filter { controller.movements.contains($0.rawValue) }
-        switch chosen.count {
-        case 0: return "Any"
-        case 1: return chosen[0].rawValue
-        default: return "\(chosen.count) movements"
-        }
-    }
-
-    var body: some View {
-        LabeledContent("Art movement") {
-            Menu(summary) {
-                Toggle("Any", isOn: Binding(
-                    get: { controller.movements.isEmpty },
-                    set: { if $0 { controller.movements = [] } }
-                ))
-                Divider()
-                let counts = controller.movementCounts
-                ForEach(ArtMovement.allCases) { movement in
-                    Toggle("\(movement.rawValue)  (\(counts[movement.rawValue, default: 0]))", isOn: Binding(
-                        get: { controller.movements.contains(movement.rawValue) },
-                        set: { controller.setMovement(movement, enabled: $0) }
-                    ))
-                }
-            }
-            .fixedSize()
-        }
     }
 }
 
