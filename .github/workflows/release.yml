@@ -1,0 +1,63 @@
+# Builds OpenGallery on a GitHub-hosted Mac when a version tag is pushed,
+# records build provenance for the zip and publishes it on GitHub Releases.
+# Run it by hand with "publish" off to check a build without releasing.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version to build, e.g. 0.3.0"
+        required: true
+      publish:
+        description: "Publish a release (off: build and attest only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write       # create the release
+  id-token: write       # sign the provenance
+  attestations: write   # store it
+
+jobs:
+  release:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "push" ]; then
+            echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+            echo "publish=${{ inputs.publish }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+          SIGN_ID: "-"
+        run: |
+          scripts/bundle.sh
+          ditto -c -k --keepParent build/OpenGallery.app "build/OpenGallery-$VERSION.zip"
+          shasum -a 256 "build/OpenGallery-$VERSION.zip"
+
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: build/OpenGallery-${{ steps.version.outputs.version }}.zip
+
+      - name: Publish
+        if: steps.version.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          scripts/release_notes.sh "$VERSION" > notes.md
+          gh release create "v$VERSION" "build/OpenGallery-$VERSION.zip" \
+            --title "OpenGallery $VERSION" --notes-file notes.md --verify-tag
