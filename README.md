@@ -21,7 +21,6 @@
 
 <p align="center">
   <a href="https://github.com/isaaczaak/opengallery/releases/latest"><b>Download for macOS</b></a>
-  · Made by <a href="https://x.com/isaaccyn">Isaac Ng</a>
 </p>
 
 <p align="center">
@@ -55,16 +54,34 @@ back.
 
 OpenGallery runs on Apple Silicon and Intel Macs with macOS 13 or later.
 
+## Privacy
+
+OpenGallery collects no data about you and has no accounts, analytics or
+tracking. It only connects to the National Gallery of Art's image server to
+download artwork.
+
+Force Click needs the Input Monitoring permission because macOS only shares
+trackpad pressure with apps that have it. OpenGallery listens for trackpad
+pressure and gestures on the desktop, never reads your keystrokes, and keeps
+nothing. Force Click is off by default, so OpenGallery doesn't ask for the
+permission unless you turn it on.
+
 ## Install
 
 ### Agent prompt
 
-Paste this into a coding agent such as Claude Code and it installs
-OpenGallery for you:
+Paste this into any coding agent that can run commands on your Mac, such as
+Claude Code, Codex, Cursor or Gemini CLI, and it installs OpenGallery for you:
 
 ```text
-Install OpenGallery, a macOS menu bar app, from
-https://github.com/isaaczaak/opengallery.
+Install OpenGallery from https://github.com/isaaczaak/opengallery.
+
+What it is: an open-source (MIT) macOS menu bar app, written in Swift, that
+sets the desktop wallpaper to public-domain paintings from the National
+Gallery of Art. It downloads images only from the Gallery's image server
+(api.nga.gov), collects no data, and needs no account or API key. You'll
+build it from source with Apple's command line tools. The only thing it
+installs is /Applications/OpenGallery.app, which starts at login.
 
 1. Check this Mac runs macOS 13 or later (sw_vers). If `swift --version`
    fails, run `xcode-select --install`, wait for me to finish the installer,
@@ -138,10 +155,6 @@ needs space.
 
 **Memory:** About 50 MB.
 
-**Privacy:** OpenGallery only connects to the National Gallery of Art's image
-server and collects no data about you. Force Click reads trackpad pressure on
-the desktop and nothing else.
-
 ### Artwork list
 
 `scripts/build_manifest.py` builds `Resources/manifest.json` from the
@@ -188,3 +201,9 @@ The Gallery releases images of works it believes to be in the public domain
 under [CC0](https://www.nga.gov/terms-and-notices#open-access), along with the
 collection data. Artwork courtesy National Gallery of Art, Washington.
 OpenGallery isn't affiliated with or endorsed by the National Gallery of Art.
+
+---
+
+<p align="center">
+  Made by <a href="https://x.com/isaaccyn">Isaac Ng</a>
+</p>
