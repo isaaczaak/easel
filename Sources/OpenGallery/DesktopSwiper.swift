@@ -43,7 +43,8 @@ final class DesktopSwiper {
     }
 
     func start() {
-        controller.$swipeEnabled
+        controller.$swipeEnabled.combineLatest(controller.$isOn)
+            .map { $0 && $1 }
             .removeDuplicates()
             .sink { [weak self] enabled in self?.setEnabled(enabled) }
             .store(in: &observers)
@@ -311,7 +312,7 @@ private final class Stage: NSWindow {
     }
 
     /// Decodes `file` off the main thread at screen size and shows it.
-    func load(_ file: URL, into layer: CALayer, visibleWhenReady: Bool) {
+    func load(_ file: URL, into layer: CALayer, visibleWhenReady: Bool, then: (() -> Void)? = nil) {
         let size = pixelSize
         Task.detached(priority: .userInitiated) {
             let image = Self.decode(file, covering: size)
@@ -321,6 +322,7 @@ private final class Stage: NSWindow {
                 layer.contents = image
                 CATransaction.commit()
                 if visibleWhenReady { self.alphaValue = 1 }
+                then?()
             }
         }
     }
@@ -345,6 +347,51 @@ private final class Stage: NSWindow {
     }
 }
 
+// MARK: - Crossfade
+
+/// Changes the wallpaper without a hard cut: each screen is covered with a
+/// picture of what it shows now, the wallpaper is changed underneath, and
+/// the cover slowly fades away.
+@MainActor
+enum Crossfade {
+    /// `covering` is what each screen shows now, in `NSScreen.screens`
+    /// order. `change` makes the switch and calls its argument when done.
+    static func run(covering files: [URL?], change: @escaping (@escaping () -> Void) -> Void) {
+        let screens = NSScreen.screens
+        let stages = zip(screens.indices, screens).compactMap { index, screen -> (Stage, URL)? in
+            guard files.indices.contains(index), let file = files[index] else { return nil }
+            return (Stage(screen: screen, index: index), file)
+        }
+        var started = false
+        var waiting = stages.count
+        let start = {
+            guard !started else { return }
+            started = true
+            change {
+                // Let the new wallpaper land underneath, then reveal it.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                    NSAnimationContext.runAnimationGroup({ context in
+                        context.duration = 0.9
+                        context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                        stages.forEach { $0.0.animator().alphaValue = 0 }
+                    }, completionHandler: {
+                        stages.forEach { $0.0.close() }
+                    })
+                }
+            }
+        }
+        guard !stages.isEmpty else { start(); return }
+        for (stage, file) in stages {
+            stage.load(file, into: stage.current, visibleWhenReady: true) {
+                waiting -= 1
+                if waiting == 0 { start() }
+            }
+        }
+        // Don't hold the switch up if an image won't decode.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { start() }
+    }
+}
+
 private enum DesktopSwiperGap {
     static let value: CGFloat = 24
 }
@@ -357,9 +404,14 @@ enum Desktop {
     static func isUnderPointer() -> Bool {
         guard let primary = NSScreen.screens.first else { return false }
         let mouse = NSEvent.mouseLocation
+        // Not over the menu bar or the Dock.
+        guard let screen = screenUnderPointer(), NSMouseInRect(mouse, screen.visibleFrame, false) else { return false }
         let point = CGPoint(x: mouse.x, y: primary.frame.maxY - mouse.y)  // window list is top-left based
         let me = ProcessInfo.processInfo.processIdentifier
         let iconLevel = Int(CGWindowLevelForKey(.desktopIconWindow))
+        // The Dock, Screenshot and similar system overlays cover whole screens
+        // at this level and above, but let clicks through; app windows sit below.
+        let overlayLevel = Int(CGWindowLevelForKey(.dockWindow))
         guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
         else { return false }
         for window in windows {  // front to back
@@ -369,7 +421,9 @@ enum Desktop {
                   let bounds = CGRect(dictionaryRepresentation: boundsDict),
                   bounds.contains(point)
             else { continue }
-            return (window[kCGWindowLayer as String] as? Int ?? 0) <= iconLevel
+            let layer = window[kCGWindowLayer as String] as? Int ?? 0
+            if layer >= overlayLevel { continue }
+            return layer <= iconLevel
         }
         return true
     }

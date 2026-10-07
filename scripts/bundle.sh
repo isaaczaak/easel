@@ -1,11 +1,11 @@
 #!/bin/bash
-# Build a Universal (Apple Silicon + Intel) Easel.app into build/.
+# Build a Universal (Apple Silicon + Intel) OpenGallery.app into build/.
 #   scripts/bundle.sh            build only
 #   scripts/bundle.sh --install  also copy to /Applications and relaunch
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
-APP_NAME="Easel"
+APP_NAME="OpenGallery"
 BUNDLE_ID="com.isaacng.gallery-wallpaper"
 VERSION="0.1.0"
 APP="build/$APP_NAME.app"
@@ -47,7 +47,8 @@ echo "Built $APP ($(du -sh "$APP" | cut -f1)) — $(lipo -archs "$APP/Contents/M
 
 if [ "${1:-}" = "--install" ]; then
     pkill -x "$APP_NAME" 2>/dev/null || true
-    rm -rf "/Applications/$APP_NAME.app"
+    pkill -x Easel 2>/dev/null || true  # the app's old name
+    rm -rf "/Applications/$APP_NAME.app" /Applications/Easel.app
     cp -R "$APP" /Applications/
     open "/Applications/$APP_NAME.app"
     echo "Installed and launched /Applications/$APP_NAME.app"

@@ -1,11 +1,11 @@
 <p align="center">
-  <img src="docs/icon.png" width="128" height="128" alt="Easel app icon">
+  <img src="docs/icon.png" width="128" height="128" alt="OpenGallery app icon">
 </p>
 
-<h1 align="center">Easel</h1>
+<h1 align="center">OpenGallery</h1>
 
 <p align="center">
-  Easel lives in your menu bar and rotates 20,000 public-domain works from the
+  OpenGallery lives in your menu bar and rotates 20,000 public-domain works from the
   <a href="https://www.nga.gov/artworks/free-images-and-open-access">National Gallery of Art</a>
   as your wallpaper, fetched at full resolution for every screen.
 </p>
@@ -53,12 +53,12 @@ cd easel
 scripts/bundle.sh --install
 ```
 
-This builds Easel, copies it to `/Applications` and launches it. It appears in
+This builds OpenGallery, copies it to `/Applications` and launches it. It appears in
 your menu bar and starts at login. Because you built it yourself, macOS opens
 it without a security warning.
 
 To update, run `git pull` and `scripts/bundle.sh --install` again. To remove
-it, quit Easel from its menu and delete `/Applications/Easel.app`.
+it, quit OpenGallery from its menu and delete `/Applications/OpenGallery.app`.
 
 ## Refresh the artwork list
 
@@ -82,7 +82,7 @@ and cached in `~/Library/Caches` (newest 20 kept).
 
 ## Layout
 
-- `Sources/Easel/` — SwiftUI `MenuBarExtra` app and Settings window
+- `Sources/OpenGallery/` — SwiftUI `MenuBarExtra` app and Settings window
 - `scripts/` — manifest, color analysis, icon and bundling scripts
 - `Resources/` — manifest and icon assets bundled into the app
 
@@ -93,4 +93,8 @@ Developer ID signing and notarization, Sparkle updates, hosted manifest.
 ## License
 
 Code is MIT (see `LICENSE`). Artwork images and collection data come from the
-National Gallery of Art's open access program and are CC0.
+National Gallery of Art's [open access program](https://www.nga.gov/artworks/free-images-and-open-access):
+images of works the Gallery believes to be in the public domain are released
+under [CC0](https://www.nga.gov/terms-and-notices#open-access), as is the
+collection data. Artwork courtesy National Gallery of Art, Washington. OpenGallery is
+not affiliated with or endorsed by the National Gallery of Art.

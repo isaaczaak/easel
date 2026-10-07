@@ -1,6 +1,6 @@
 import SwiftUI
 
-/// Opens the Settings window and brings it forward. Easel has no Dock
+/// Opens the Settings window and brings it forward. OpenGallery has no Dock
 /// icon, so it must activate itself or the window opens behind other apps.
 struct SettingsButton: View {
     var body: some View {
@@ -67,7 +67,7 @@ private struct GeneralSettings: View {
                 }
                 Toggle("Different art on each display", isOn: $controller.perDisplay)
             } footer: {
-                Text("Easel also changes the artwork when your Mac wakes, if the interval has passed.")
+                Text("OpenGallery also changes the artwork when your Mac wakes, if the interval has passed.")
                     .foregroundStyle(.secondary)
             }
             Section {
@@ -79,7 +79,7 @@ private struct GeneralSettings: View {
             } header: {
                 Text("On the desktop")
             } footer: {
-                Text("Swipe sideways with two fingers on an empty part of the desktop: left for the next artwork, right for the previous one. Press firmly on the desktop to see what you're looking at.")
+                Text("Swipe with two fingers to change artwork. Press firmly for details.")
                     .foregroundStyle(.secondary)
             }
             Section {
@@ -88,7 +88,7 @@ private struct GeneralSettings: View {
                     set: { controller.setLaunchAtLogin($0) }
                 ))
             } footer: {
-                Text("Artwork from the [National Gallery of Art's open access collection](https://www.nga.gov/artworks/free-images-and-open-access), released under CC0.")
+                Text("Public domain artwork ([CC0](https://www.nga.gov/artworks/free-images-and-open-access)), courtesy National Gallery of Art, Washington. OpenGallery isn't affiliated with the Gallery.")
                     .foregroundStyle(.secondary)
             }
         }

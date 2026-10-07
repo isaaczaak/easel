@@ -5,9 +5,14 @@ final class ImageCache {
     private let directory: URL
     private let limit: Int
 
-    init(limit: Int = 20) {
+    /// Where downloaded artwork lives.
+    static var directory: URL {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask)[0]
-        directory = caches.appendingPathComponent(Bundle.main.bundleIdentifier ?? "Easel", isDirectory: true)
+        return caches.appendingPathComponent(Bundle.main.bundleIdentifier ?? "OpenGallery", isDirectory: true)
+    }
+
+    init(limit: Int = 20) {
+        directory = Self.directory
         self.limit = limit
         try? FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
     }

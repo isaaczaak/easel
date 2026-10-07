@@ -24,7 +24,8 @@ final class ArtworkCardPresenter {
     }
 
     func start() {
-        controller.$forceClickEnabled
+        controller.$forceClickEnabled.combineLatest(controller.$isOn)
+            .map { $0 && $1 }
             .removeDuplicates()
             .sink { [weak self] enabled in self?.setEnabled(enabled) }
             .store(in: &observers)
@@ -43,7 +44,7 @@ final class ArtworkCardPresenter {
         if CGPreflightListenEventAccess() {
             installTap()
         } else {
-            // Adds Easel to Privacy & Security → Input Monitoring and asks once;
+            // Adds OpenGallery to Privacy & Security → Input Monitoring and asks once;
             // start listening as soon as it's switched on.
             CGRequestListenEventAccess()
             permissionTimer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] timer in
@@ -225,6 +226,22 @@ private struct ArtworkCard: View {
                 favoriteButton
             }
             .font(.system(size: 12, weight: .medium))
+
+            // The Gallery's suggested credit for its open access images.
+            Link(destination: URL(string: "https://www.nga.gov/terms-and-notices#open-access")!) {
+                Label {
+                    Text("Public domain (CC0) · Courtesy National Gallery of Art, Washington")
+                } icon: {
+                    Text("0")
+                        .font(.system(size: 8, weight: .bold, design: .monospaced))
+                        .frame(width: 13, height: 13)
+                        .overlay(Circle().strokeBorder(lineWidth: 1.2))
+                }
+                .font(.system(size: 10.5))
+                .foregroundStyle(.secondary)
+            }
+            .help("Read the Gallery's Open Access policy")
+            .padding(.top, 12)
         }
         .padding(22)
         .frame(width: 340, alignment: .leading)

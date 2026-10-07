@@ -79,6 +79,28 @@ final class WallpaperController: ObservableObject {
     @Published var swipeEnabled: Bool {
         didSet { defaults.set(swipeEnabled, forKey: Keys.swipeEnabled) }
     }
+    /// Off hands the desktop back: the wallpapers from before OpenGallery return
+    /// and nothing changes until it's switched on again.
+    @Published var isOn: Bool {
+        didSet {
+            guard isOn != oldValue else { return }
+            defaults.set(isOn, forKey: Keys.isOn)
+            if isOn {
+                saveSystemWallpapers()
+                let showing = NSScreen.screens.map { NSWorkspace.shared.desktopImageURL(for: $0) }
+                Crossfade.run(covering: showing) { done in
+                    self.currentFiles = []  // so every screen is set again
+                    self.showCurrent(then: done)
+                }
+            } else {
+                loadTask?.cancel()
+                Crossfade.run(covering: currentFiles) { done in
+                    self.restoreSystemWallpapers()
+                    done()
+                }
+            }
+        }
+    }
     @Published var forceClickEnabled: Bool {
         didSet { defaults.set(forceClickEnabled, forKey: Keys.forceClickEnabled) }
     }
@@ -95,7 +117,8 @@ final class WallpaperController: ObservableObject {
         static let palettes = "palettes", hideNudity = "hideNudity"
         static let tracks = "tracks", positions = "trackPositions", lastChange = "lastChange"
         static let launchAtLogin = "launchAtLogin", swipeEnabled = "swipeEnabled"
-        static let forceClickEnabled = "forceClickEnabled"
+        static let forceClickEnabled = "forceClickEnabled", isOn = "isOn"
+        static let systemWallpapers = "systemWallpapers"
         // Before per-screen history: frames of ids shown together.
         static let frames = "frames", position = "position"
     }
@@ -143,6 +166,7 @@ final class WallpaperController: ObservableObject {
         paused = defaults.bool(forKey: Keys.paused)
         swipeEnabled = defaults.object(forKey: Keys.swipeEnabled) as? Bool ?? true
         forceClickEnabled = defaults.object(forKey: Keys.forceClickEnabled) as? Bool ?? true
+        isOn = defaults.object(forKey: Keys.isOn) as? Bool ?? true
         favorites = defaults.stringArray(forKey: Keys.favorites) ?? []
 
         var tracks = (defaults.array(forKey: Keys.tracks) as? [[String]]) ?? []
@@ -168,7 +192,10 @@ final class WallpaperController: ObservableObject {
         let center = NSWorkspace.shared.notificationCenter
         // setDesktopImageURL only affects the active Space, so re-apply on switch.
         center.addObserver(forName: NSWorkspace.activeSpaceDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.reapply() }
+            Task { @MainActor in
+                guard let self else { return }
+                if self.isOn { self.reapply() } else { self.restoreSystemWallpapers() }
+            }
         }
         center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
             Task { @MainActor in self?.tick() }
@@ -177,7 +204,11 @@ final class WallpaperController: ObservableObject {
             forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
         ) { [weak self] _ in
             // A display was added, removed or changed size.
-            Task { @MainActor in self?.showCurrent() }
+            Task { @MainActor in
+                guard let self, self.isOn else { return }
+                self.saveSystemWallpapers()  // a newly connected display's own wallpaper
+                self.showCurrent()
+            }
         }
 
         // Check every minute rather than scheduling one long timer, so sleep
@@ -186,6 +217,8 @@ final class WallpaperController: ObservableObject {
             Task { @MainActor in self?.tick() }
         }
 
+        guard isOn else { return }
+        saveSystemWallpapers()
         if tracks.allSatisfy(\.isEmpty) || Date().timeIntervalSince(lastChange) >= interval.seconds && !paused {
             next()
         } else {
@@ -198,6 +231,7 @@ final class WallpaperController: ObservableObject {
     /// Moves every screen on, or only `screen` in per-display mode. `then`
     /// runs once the new wallpaper is set, or the change failed.
     func next(screen: Int? = nil, retriesLeft: Int = 2, then: (() -> Void)? = nil) {
+        guard isOn else { then?(); return }
         ensureTracks()
         let before = positions
         var fresh: Set<Int> = []
@@ -222,6 +256,7 @@ final class WallpaperController: ObservableObject {
     }
 
     func previous(screen: Int? = nil, then: (() -> Void)? = nil) {
+        guard isOn else { then?(); return }
         ensureTracks()
         let movable = trackIndices(for: screen).filter { positions[$0] > 0 }
         guard !movable.isEmpty else { then?(); return }
@@ -345,7 +380,7 @@ final class WallpaperController: ObservableObject {
     // MARK: - Applying
 
     private func tick() {
-        guard !paused, Date().timeIntervalSince(lastChange) >= interval.seconds else { return }
+        guard isOn, !paused, Date().timeIntervalSince(lastChange) >= interval.seconds else { return }
         next()
     }
 
@@ -354,6 +389,7 @@ final class WallpaperController: ObservableObject {
     /// after that, history goes back to `restoring` so it matches the screen.
     private func showCurrent(fresh: Set<Int> = [], retriesLeft: Int = 0, restoring: [Int]? = nil,
                              then: (() -> Void)? = nil) {
+        guard isOn else { then?(); return }
         ensureTracks()
         let ids = trackIDs()
         guard ids.allSatisfy({ $0 != nil }), !ids.isEmpty else { then?(); return }
@@ -385,7 +421,7 @@ final class WallpaperController: ObservableObject {
             } catch {
                 // Superseded by a newer load (URLSession throws URLError.cancelled).
                 if Task.isCancelled { then?(); return }
-                NSLog("Easel: failed to show \(ids): \(error)")
+                NSLog("OpenGallery: failed to show \(ids): \(error)")
                 if retriesLeft > 0, !fresh.isEmpty {
                     for track in fresh {
                         tracks[track].remove(at: positions[track])
@@ -439,6 +475,48 @@ final class WallpaperController: ObservableObject {
                 files[index] = file
             }
             return files.compactMap { $0 }
+        }
+    }
+
+    // MARK: - System wallpaper
+
+    /// macOS's own default, for displays whose earlier wallpaper wasn't saved.
+    private static let defaultWallpaper = URL(fileURLWithPath: "/System/Library/CoreServices/DefaultDesktop.heic")
+
+    private static func displayID(of screen: NSScreen) -> String {
+        "\(screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] ?? screen.localizedName)"
+    }
+
+    /// Remembers each display's wallpaper, unless it's already OpenGallery's.
+    private func saveSystemWallpapers() {
+        var saved = defaults.dictionary(forKey: Keys.systemWallpapers) as? [String: [String: Any]] ?? [:]
+        let ours = ImageCache.directory.standardizedFileURL.path
+        for screen in NSScreen.screens {
+            guard let url = NSWorkspace.shared.desktopImageURL(for: screen),
+                  !url.standardizedFileURL.path.hasPrefix(ours)
+            else { continue }
+            let options = NSWorkspace.shared.desktopImageOptions(for: screen) ?? [:]
+            var entry: [String: Any] = ["path": url.path]
+            if let scaling = options[.imageScaling] as? NSNumber { entry["scaling"] = scaling }
+            if let clipping = options[.allowClipping] as? NSNumber { entry["clipping"] = clipping }
+            saved[Self.displayID(of: screen)] = entry
+        }
+        defaults.set(saved, forKey: Keys.systemWallpapers)
+    }
+
+    /// Puts back each display's saved wallpaper, or macOS's default.
+    private func restoreSystemWallpapers() {
+        let saved = defaults.dictionary(forKey: Keys.systemWallpapers) as? [String: [String: Any]] ?? [:]
+        for screen in NSScreen.screens {
+            var url = Self.defaultWallpaper
+            var options: [NSWorkspace.DesktopImageOptionKey: Any] = [:]
+            if let entry = saved[Self.displayID(of: screen)], let path = entry["path"] as? String,
+               FileManager.default.fileExists(atPath: path) {
+                url = URL(fileURLWithPath: path)
+                if let scaling = entry["scaling"] { options[.imageScaling] = scaling }
+                if let clipping = entry["clipping"] { options[.allowClipping] = clipping }
+            }
+            try? NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: options)
         }
     }
 
@@ -517,7 +595,7 @@ final class WallpaperController: ObservableObject {
                 try SMAppService.mainApp.unregister()
             }
         } catch {
-            NSLog("Easel: login item change failed: \(error)")
+            NSLog("OpenGallery: login item change failed: \(error)")
             status = "Couldn't change Launch at Login"
         }
         refreshLoginItemStatus()

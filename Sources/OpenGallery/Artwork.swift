@@ -64,7 +64,7 @@ struct Manifest: Codable {
               let data = try? Data(contentsOf: url),
               let manifest = try? JSONDecoder().decode(Manifest.self, from: data)
         else {
-            NSLog("Easel: bundled manifest missing or invalid")
+            NSLog("OpenGallery: bundled manifest missing or invalid")
             return Manifest(version: 0, artworks: [])
         }
         return manifest
