@@ -5,10 +5,10 @@
 <h1 align="center">OpenGallery</h1>
 
 <p align="center">
-  OpenGallery turns your desktop into a gallery. It sets your wallpaper to one of
-  60,000 public-domain works from the
-  <a href="https://www.nga.gov/artworks/free-images-and-open-access">National Gallery of Art</a>,
-  at full resolution on every screen.
+  OpenGallery brings the
+  <a href="https://www.nga.gov/artworks/free-images-and-open-access">National Gallery of Art</a>
+  to your Mac. It sets your wallpaper from 60,000 of its public-domain works, at
+  full resolution on every screen.
 </p>
 
 <p align="center">
