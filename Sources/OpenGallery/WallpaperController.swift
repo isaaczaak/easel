@@ -47,23 +47,23 @@ final class WallpaperController: ObservableObject {
         didSet { defaults.set(interval.rawValue, forKey: Keys.interval) }
     }
     @Published var enabledKinds: Set<String> {
-        didSet { defaults.set(Array(enabledKinds), forKey: Keys.kinds); upNext = [:] }
+        didSet { defaults.set(Array(enabledKinds), forKey: Keys.kinds); filtersChanged() }
     }
     /// Selected palette colors; empty means any color.
     @Published var palettes: Set<String> {
-        didSet { defaults.set(Array(palettes), forKey: Keys.palettes); upNext = [:] }
+        didSet { defaults.set(Array(palettes), forKey: Keys.palettes); filtersChanged() }
     }
     @Published var orientation: Orientation {
-        didSet { defaults.set(orientation.rawValue, forKey: Keys.orientation); upNext = [:] }
+        didSet { defaults.set(orientation.rawValue, forKey: Keys.orientation); filtersChanged() }
     }
     /// Selected art movements; empty means any (including untagged works).
     @Published var movements: Set<String> {
-        didSet { defaults.set(Array(movements), forKey: Keys.movements); upNext = [:] }
+        didSet { defaults.set(Array(movements), forKey: Keys.movements); filtersChanged() }
     }
     @Published var hideNudity: Bool {
         didSet {
             defaults.set(hideNudity, forKey: Keys.hideNudity)
-            upNext = [:]
+            filtersChanged()
             // Swap out anything now hidden that's on screen.
             if hideNudity, current.contains(where: { $0.artwork.nude == true }) {
                 skipToEnd()
@@ -72,12 +72,12 @@ final class WallpaperController: ObservableObject {
         }
     }
     @Published var favoritesOnly: Bool {
-        didSet { defaults.set(favoritesOnly, forKey: Keys.favoritesOnly); upNext = [:] }
+        didSet { defaults.set(favoritesOnly, forKey: Keys.favoritesOnly); filtersChanged() }
     }
     @Published var perDisplay: Bool {
         didSet {
             defaults.set(perDisplay, forKey: Keys.perDisplay)
-            upNext = [:]
+            upNext = [:]; upPrevious = [:]
             // Single mode carries on the first screen's track.
             if !perDisplay { tracks = Array(tracks.prefix(1)); positions = Array(positions.prefix(1)) }
             skipToEnd()  // always pick fresh art, not forward history
@@ -95,16 +95,20 @@ final class WallpaperController: ObservableObject {
             defaults.set(isOn, forKey: Keys.isOn)
             if isOn {
                 saveSystemWallpapers()
-                let showing = NSScreen.screens.map { NSWorkspace.shared.desktopImageURL(for: $0) }
-                Crossfade.run(covering: showing) { done in
-                    self.currentFiles = []  // so every screen is set again
-                    self.showCurrent(then: done)
+                ensureTracks()
+                let jobs = jobs(for: trackIDs(), on: NSScreen.screens)
+                Task {
+                    let files = (try? await download(jobs)) ?? []
+                    guard isOn else { return }
+                    Crossfade.run(to: files) {
+                        self.currentFiles = []  // so every screen is set again
+                        self.showCurrent()
+                    }
                 }
             } else {
                 loadTask?.cancel()
-                Crossfade.run(covering: currentFiles) { done in
+                Crossfade.run(to: NSScreen.screens.map { systemWallpaper(for: $0).url }) {
                     self.restoreSystemWallpapers()
-                    done()
                 }
             }
         }
@@ -151,6 +155,8 @@ final class WallpaperController: ObservableObject {
     /// rotating or swiping never waits on the network.
     private var upNext: [Int: [Artwork]] = [:]
     private static let readyAhead = 3
+    /// The fresh artwork each track goes back to once history runs out.
+    private var upPrevious: [Int: Artwork] = [:]
     private var loadTask: Task<Void, Never>?
     private var timer: Timer?
 
@@ -160,9 +166,24 @@ final class WallpaperController: ObservableObject {
         setting.combineLatest($isOn).map { $0 && $1 }.removeDuplicates().eraseToAnyPublisher()
     }
 
+    /// Whether `next()` has anything to show on `screen`: later history, or
+    /// another artwork matching the filters.
+    func canGoForward(screen: Int? = nil) -> Bool {
+        if trackIndices(for: screen).contains(where: { positions[$0] < tracks[$0].count - 1 }) { return true }
+        return pickOne(excluding: Set(trackIDs().compactMap { $0 })) != nil
+    }
+
+    /// How many artworks match the current filters.
+    var matchingCount: Int {
+        let filter = filter
+        return (0..<catalog.count).reduce(0) { filter.matches($1) ? $0 + 1 : $0 }
+    }
+
     /// Whether `previous()` has anywhere to go, on every screen or one.
+    /// Going back retraces history, then keeps going with fresh artwork, so
+    /// it's only blocked when nothing matches the filters.
     func canGoBack(screen: Int? = nil) -> Bool {
-        trackIndices(for: screen).contains { positions[$0] > 0 }
+        trackIndices(for: screen).contains { positions[$0] > 0 } || canGoForward(screen: screen)
     }
 
     init() {
@@ -268,11 +289,24 @@ final class WallpaperController: ObservableObject {
     func previous(screen: Int? = nil, then: (() -> Void)? = nil) {
         guard isOn else { then?(); return }
         ensureTracks()
-        let movable = trackIndices(for: screen).filter { positions[$0] > 0 }
-        guard !movable.isEmpty else { then?(); return }
         let before = positions
-        for track in movable { positions[track] -= 1 }
-        showCurrent(restoring: before, then: then)
+        var moved = false
+        var prepended: Set<Int> = []
+        for track in trackIndices(for: screen) {
+            if positions[track] > 0 {
+                positions[track] -= 1
+            } else if let artwork = takeUpPrevious(track) {
+                // Past the start of history: a fresh artwork, kept as the new oldest.
+                tracks[track].insert(artwork.id, at: 0)
+                if tracks[track].count > Self.historyLimit { tracks[track].removeLast() }
+                prepended.insert(track)
+            } else {
+                continue
+            }
+            moved = true
+        }
+        guard moved else { then?(); return }
+        showCurrent(restoring: before, prepended: prepended, then: then)
     }
 
     /// Local files for the artwork `next(screen:)` or `previous(screen:)`
@@ -288,9 +322,9 @@ final class WallpaperController: ObservableObject {
             if tracks[track].indices.contains(position) {
                 ids[track] = tracks[track][position]
                 changed = true
-            } else if forward {
-                prefetch()  // `next()` takes exactly these
-                if let artwork = upNext[track]?.first {
+            } else {
+                prefetch()  // `next()` and `previous()` take exactly these
+                if let artwork = forward ? upNext[track]?.first : upPrevious[track] {
                     ids[track] = artwork.id
                     changed = true
                 }
@@ -319,7 +353,7 @@ final class WallpaperController: ObservableObject {
             favorites.insert(artwork.id, at: 0)
         }
         defaults.set(favorites, forKey: Keys.favorites)
-        if favoritesOnly { upNext = [:] }
+        if favoritesOnly { filtersChanged() }
     }
 
     var showsAllKinds: Bool {
@@ -417,7 +451,7 @@ final class WallpaperController: ObservableObject {
     /// download drops the `fresh` picks and tries different artworks instead;
     /// after that, history goes back to `restoring` so it matches the screen.
     private func showCurrent(fresh: Set<Int> = [], retriesLeft: Int = 0, restoring: [Int]? = nil,
-                             then: (() -> Void)? = nil) {
+                             prepended: Set<Int> = [], then: (() -> Void)? = nil) {
         guard isOn else { then?(); return }
         ensureTracks()
         let ids = trackIDs()
@@ -468,6 +502,9 @@ final class WallpaperController: ObservableObject {
                 } else {
                     for track in fresh where !tracks[track].isEmpty {
                         tracks[track].removeLast()
+                    }
+                    for track in prepended where !tracks[track].isEmpty {
+                        tracks[track].removeFirst()
                     }
                     if let restoring, restoring.count == positions.count {
                         positions = zip(restoring, tracks).map { min($0, max($1.count - 1, 0)) }
@@ -539,19 +576,23 @@ final class WallpaperController: ObservableObject {
     /// Puts back each display's saved wallpaper, or macOS's default. With
     /// `onlyOurs`, displays not showing OpenGallery's artwork are left alone.
     private func restoreSystemWallpapers(onlyOurs: Bool = false) {
-        let saved = defaults.dictionary(forKey: Keys.systemWallpapers) as? [String: [String: Any]] ?? [:]
         for screen in NSScreen.screens {
             if onlyOurs, !Self.isOurs(NSWorkspace.shared.desktopImageURL(for: screen)) { continue }
-            var url = Self.defaultWallpaper
-            var options: [NSWorkspace.DesktopImageOptionKey: Any] = [:]
-            if let entry = saved[Self.displayID(of: screen)], let path = entry["path"] as? String,
-               FileManager.default.fileExists(atPath: path) {
-                url = URL(fileURLWithPath: path)
-                if let scaling = entry["scaling"] { options[.imageScaling] = scaling }
-                if let clipping = entry["clipping"] { options[.allowClipping] = clipping }
-            }
+            let (url, options) = systemWallpaper(for: screen)
             try? NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: options)
         }
+    }
+
+    /// The wallpaper `screen` had before OpenGallery, or macOS's default.
+    private func systemWallpaper(for screen: NSScreen) -> (url: URL, options: [NSWorkspace.DesktopImageOptionKey: Any]) {
+        let saved = defaults.dictionary(forKey: Keys.systemWallpapers) as? [String: [String: Any]] ?? [:]
+        guard let entry = saved[Self.displayID(of: screen)], let path = entry["path"] as? String,
+              FileManager.default.fileExists(atPath: path)
+        else { return (Self.defaultWallpaper, [:]) }
+        var options: [NSWorkspace.DesktopImageOptionKey: Any] = [:]
+        if let scaling = entry["scaling"] { options[.imageScaling] = scaling }
+        if let clipping = entry["clipping"] { options[.allowClipping] = clipping }
+        return (URL(fileURLWithPath: path), options)
     }
 
     private func reapply() {
@@ -574,6 +615,13 @@ final class WallpaperController: ObservableObject {
                 added.append(pick)
             }
             upNext[track] = queue
+            if upPrevious[track] == nil {
+                let taken = Set(upNext.values.joined().map(\.id) + upPrevious.values.map(\.id) + trackIDs().compactMap { $0 })
+                if let pick = pickOne(excluding: taken) {
+                    upPrevious[track] = pick
+                    added.append(pick)
+                }
+            }
             guard !added.isEmpty else { continue }
             let size = perDisplay && screens.indices.contains(track)
                 ? screens[track].pixelSize : Self.largestPixelSize(of: screens)
@@ -583,6 +631,11 @@ final class WallpaperController: ObservableObject {
                 Memory.relieve()
             }
         }
+    }
+
+    private func takeUpPrevious(_ track: Int) -> Artwork? {
+        defer { upPrevious[track] = nil }
+        return upPrevious[track] ?? pickOne(excluding: Set(trackIDs().compactMap { $0 }))
     }
 
     private func takeUpNext(_ track: Int) -> Artwork? {
@@ -596,26 +649,60 @@ final class WallpaperController: ObservableObject {
 
     /// A random artwork matching the filters, other than `excluding`,
     /// avoiding recent ones when the pool is big enough.
+    /// The current filters, ready to test catalog entries against.
+    private struct Filter {
+        let catalog: Catalog
+        let kinds, colors, styles: UInt16
+        let orientation: Orientation
+        let favorites: Set<Int>?
+        let anyColor, anyStyle, hideNudity: Bool
+
+        func matches(_ i: Int) -> Bool {
+            kinds & (1 << UInt16(catalog.kind(at: i))) != 0
+                && orientation.includes(fillsScreen: catalog.fillsScreen(at: i))
+                && favorites.map { $0.contains(i) } ?? true
+                && (anyColor || catalog.paletteMask(at: i) & colors != 0)
+                && (anyStyle || catalog.movementMask(at: i) & styles != 0)
+                && !(hideNudity && catalog.isNude(at: i))
+        }
+    }
+
+    private var filter: Filter {
+        Filter(catalog: catalog,
+               kinds: Catalog.mask(enabledKinds, in: catalog.kinds),
+               colors: Catalog.mask(palettes, in: catalog.palettes),
+               styles: Catalog.mask(movements, in: catalog.movements),
+               orientation: orientation,
+               favorites: favoritesOnly ? Set(favorites.compactMap(catalog.index(of:))) : nil,
+               anyColor: palettes.isEmpty, anyStyle: movements.isEmpty, hideNudity: hideNudity)
+    }
+
+    private var refill: DispatchWorkItem?
+
+    /// After a filter change, keeps the ready artworks that still match and
+    /// fetches replacements once the settings stop changing, so the next
+    /// swipes don't wait on downloads.
+    private func filtersChanged() {
+        let filter = filter
+        let stillMatches = { (artwork: Artwork) in self.catalog.index(of: artwork.id).map(filter.matches) ?? false }
+        upNext = upNext.mapValues { $0.filter(stillMatches) }
+        upPrevious = upPrevious.filter { stillMatches($0.value) }
+        refill?.cancel()
+        let work = DispatchWorkItem { [weak self] in self?.prefetch() }
+        refill = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
+    }
+
     private func pickOne(excluding: Set<String>) -> Artwork? {
         let excluded = Set(excluding.compactMap(catalog.index(of:)))
         let recent = excluded.union(tracks.flatMap { $0.suffix(Self.historyLimit) }.compactMap(catalog.index(of:)))
-        let favorite = favoritesOnly ? Set(favorites.compactMap(catalog.index(of:))) : []
-        let kinds = Catalog.mask(enabledKinds, in: catalog.kinds)
-        let colors = Catalog.mask(palettes, in: catalog.palettes)
-        let styles = Catalog.mask(movements, in: catalog.movements)
+        let filter = filter
 
         // One pass, picking uniformly among matches (reservoir sampling), so
         // no list of candidates is built.
         var fresh: Int?, freshSeen = 0, fallback: Int?, fallbackSeen = 0
         for i in 0..<catalog.count {
-            guard kinds & (1 << UInt16(catalog.kind(at: i))) != 0,
-                  orientation.includes(fillsScreen: catalog.fillsScreen(at: i)),
-                  !favoritesOnly || favorite.contains(i),
-                  palettes.isEmpty || catalog.paletteMask(at: i) & colors != 0,
-                  movements.isEmpty || catalog.movementMask(at: i) & styles != 0,
-                  !(hideNudity && catalog.isNude(at: i)),
-                  !excluded.contains(i)
-            else { continue }
+            guard filter.matches(i), !excluded.contains(i) else { continue }
             fallbackSeen += 1
             if Int.random(in: 0..<fallbackSeen) == 0 { fallback = i }
             if !recent.contains(i) {

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 /// Opens the Settings window and brings it forward. OpenGallery has no Dock
@@ -45,14 +46,26 @@ private func bringSettingsToFront() {
 struct SettingsView: View {
     @ObservedObject var controller: WallpaperController
 
+    private enum Tab { case general, artwork, favorites }
+    /// Settings always opens on General, not the last tab used.
+    @State private var tab = Tab.general
+
     var body: some View {
-        TabView {
+        TabView(selection: $tab) {
             GeneralSettings(controller: controller)
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .tag(Tab.general)
             ArtworkSettings(controller: controller)
                 .tabItem { Label("Artwork", systemImage: "photo.artframe") }
+                .tag(Tab.artwork)
             FavoritesSettings(controller: controller)
                 .tabItem { Label("Favorites", systemImage: "heart") }
+                .tag(Tab.favorites)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { note in
+            if (note.object as? NSWindow)?.identifier?.rawValue.contains("Settings") == true {
+                tab = .general
+            }
         }
         .frame(width: 460)
     }
@@ -106,10 +119,18 @@ private struct GeneralSettings: View {
 private struct ArtworkSettings: View {
     @ObservedObject var controller: WallpaperController
 
+    /// Fits a 13" laptop screen with room to spare.
+    static var height: CGFloat {
+        min(560, (NSScreen.main?.visibleFrame.height ?? 800) - 160)
+    }
+
     private let columns = [GridItem(.flexible(), alignment: .leading), GridItem(.flexible(), alignment: .leading)]
 
     var body: some View {
         Form {
+            Section {
+                MatchCount(count: controller.matchingCount)
+            }
             Section("Type") {
                 Toggle("All kinds", isOn: Binding(
                     get: { controller.showsAllKinds },
@@ -193,7 +214,8 @@ private struct ArtworkSettings: View {
             }
         }
         .formStyle(.grouped)
-        .fixedSize(horizontal: false, vertical: true)
+        // Taller than many screens, so it scrolls within a fixed height.
+        .frame(height: ArtworkSettings.height)
     }
 }
 
@@ -314,4 +336,18 @@ private struct CreditFooter: View {
         }
         return text
     }()
+}
+
+/// How many artworks the filters leave, with a warning when it's none.
+private struct MatchCount: View {
+    let count: Int
+
+    var body: some View {
+        if count == 0 {
+            Label("No artworks match these filters. Try fewer.", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+        } else {
+            LabeledContent("Matching artworks", value: count.formatted())
+        }
+    }
 }

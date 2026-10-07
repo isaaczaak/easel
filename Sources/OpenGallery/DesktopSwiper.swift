@@ -28,6 +28,7 @@ final class DesktopSwiper {
     private var width: CGFloat = 1
     private var samples: [(time: TimeInterval, offset: CGFloat)] = []
     private var canGoBack = false
+    private var canGoForward = true
     /// The screen being swiped, in `NSScreen.screens` order.
     private var screenIndex = 0
 
@@ -117,6 +118,7 @@ final class DesktopSwiper {
         samples = [(ProcessInfo.processInfo.systemUptime, 0)]
         screenIndex = NSScreen.screens.firstIndex(of: screen) ?? 0
         canGoBack = controller.canGoBack(screen: screenIndex)
+        canGoForward = controller.canGoForward(screen: screenIndex)
         showStages()
     }
 
@@ -138,7 +140,7 @@ final class DesktopSwiper {
         }
         let towardNext = fraction < -Self.commitFraction || velocity < -Self.commitVelocity
         let towardPrevious = fraction > Self.commitFraction || velocity > Self.commitVelocity
-        if towardNext && velocity <= Self.commitVelocity {
+        if towardNext && velocity <= Self.commitVelocity && canGoForward {
             commit(forward: true)
         } else if towardPrevious && velocity >= -Self.commitVelocity && canGoBack {
             commit(forward: false)
@@ -148,10 +150,19 @@ final class DesktopSwiper {
     }
 
     /// Without earlier artwork, dragging right stretches instead of revealing.
+    /// With nothing that way, or the artwork there still loading, dragging
+    /// stretches instead of revealing an empty panel.
     private var displayedFraction: CGFloat {
         let fraction = offset / width
-        guard fraction > 0, !canGoBack else { return fraction }
-        return fraction * 0.25
+        if fraction > 0 && !(canGoBack && incomingReady(forward: false))
+            || fraction < 0 && !(canGoForward && incomingReady(forward: true)) {
+            return fraction * 0.25
+        }
+        return fraction
+    }
+
+    private func incomingReady(forward: Bool) -> Bool {
+        !stages.isEmpty && stages.allSatisfy { (forward ? $0.next : $0.previous).contents != nil }
     }
 
     private func commit(forward: Bool) {
@@ -174,17 +185,24 @@ final class DesktopSwiper {
         }
     }
 
-    /// Slides once the incoming artwork is decoded (waiting up to 0.6 s),
-    /// so a quick release never slides in an empty panel.
+    /// Slides once the incoming artwork is ready, so a release never slides
+    /// in an empty panel. If it's still downloading, the swipe holds where
+    /// it was let go with a spinner. Stops once the overlay is gone (it
+    /// leaves a few seconds after the change, even if that failed).
     private func slideWhenReady(to fraction: CGFloat, forward: Bool, waited: TimeInterval = 0) {
-        let ready = stages.allSatisfy { (forward ? $0.next : $0.previous).contents != nil }
-        guard ready || waited >= 0.6 else {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { [weak self] in
-                self?.slideWhenReady(to: fraction, forward: forward, waited: waited + 0.016)
-            }
+        let current = stages
+        guard !current.isEmpty, phase == .settling else { return }
+        let ready = current.allSatisfy { (forward ? $0.next : $0.previous).contents != nil }
+        if ready {
+            current.forEach { $0.showSpinner(false) }
+            layoutStages(fraction: fraction, animated: true)
             return
         }
-        layoutStages(fraction: fraction, animated: true)
+        if waited >= 0.25 { current.forEach { $0.showSpinner(true) } }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+            guard let self, self.stages == current else { return }
+            self.slideWhenReady(to: fraction, forward: forward, waited: waited + 0.05)
+        }
     }
 
     private func cancel() {
@@ -225,13 +243,17 @@ final class DesktopSwiper {
         if waiting == 0 { closePrevious() }
         let newStages = stages
         let screen = screenIndex
-        for forward in [true, false] where forward || canGoBack {
+        for forward in [true, false] where forward ? canGoForward : canGoBack {
             Task { [weak self] in
                 guard let files = await self?.controller.neighborFiles(forward: forward, screen: screen) else { return }
                 for stage in newStages where files.indices.contains(stage.index) {
                     guard let file = files[stage.index] else { continue }
                     self?.loadOnce(file, into: stage, layer: forward ? stage.next : stage.previous,
-                                   visibleWhenReady: false)
+                                   visibleWhenReady: false) {
+                        // Arrived mid-drag: catch up with the fingers.
+                        guard let self, self.phase == .tracking else { return }
+                        self.layoutStages(fraction: self.displayedFraction, animated: true)
+                    }
                 }
             }
         }
@@ -368,7 +390,8 @@ private final class Stage: NSWindow {
             layer.contentsGravity = .resizeAspectFill
             layer.masksToBounds = true
             layer.contentsScale = screen.backingScaleFactor
-            layer.backgroundColor = NSColor(white: 0.08, alpha: 1).cgColor
+            // While an artwork loads, its panel shows the gallery wall's plaster.
+            layer.backgroundColor = CGColor(srgbRed: 0.91, green: 0.88, blue: 0.83, alpha: 1)
             layer.frame = CGRect(x: CGFloat(slot) * (size.width + Self.gap), y: 0,
                                  width: size.width, height: size.height)
             strip.addSublayer(layer)
@@ -391,6 +414,28 @@ private final class Stage: NSWindow {
         strip.removeAllAnimations()
         CATransaction.commit()
         super.close()
+    }
+
+    private var spinner: NSProgressIndicator?
+
+    /// A spinner in the middle of the screen, for an artwork still downloading.
+    func showSpinner(_ show: Bool) {
+        if show, spinner == nil, let view = contentView {
+            let indicator = NSProgressIndicator()
+            indicator.style = .spinning
+            indicator.controlSize = .large
+            indicator.appearance = NSAppearance(named: .darkAqua)
+            indicator.sizeToFit()
+            indicator.frame.origin = NSPoint(x: view.bounds.midX - indicator.frame.width / 2,
+                                             y: view.bounds.midY - indicator.frame.height / 2)
+            view.addSubview(indicator)
+            indicator.startAnimation(nil)
+            spinner = indicator
+        } else if !show, let indicator = spinner {
+            indicator.stopAnimation(nil)
+            indicator.removeFromSuperview()
+            spinner = nil
+        }
     }
 
     /// Moves the strip so `fraction` of a screen width has slid past; -1
@@ -472,14 +517,15 @@ private final class Stage: NSWindow {
 
 // MARK: - Crossfade
 
-/// Changes the wallpaper without a hard cut: each screen is covered with a
-/// picture of what it shows now, the wallpaper is changed underneath, and
-/// the cover slowly fades away.
+/// Changes the wallpaper without a hard cut: the new picture fades in over
+/// the old straight away, the real wallpaper changes underneath, and the
+/// overlay goes once macOS has caught up (about two seconds), when the two
+/// look the same.
 @MainActor
 enum Crossfade {
-    /// `covering` is what each screen shows now, in `NSScreen.screens`
-    /// order. `change` makes the switch and calls its argument when done.
-    static func run(covering files: [URL?], change: @escaping (@escaping () -> Void) -> Void) {
+    /// `files` is the new picture for each screen, in `NSScreen.screens`
+    /// order; `change` sets the real wallpaper.
+    static func run(to files: [URL?], change: @escaping () -> Void) {
         let screens = NSScreen.screens
         let stages = zip(screens.indices, screens).compactMap { index, screen -> (Stage, URL)? in
             guard files.indices.contains(index), let file = files[index] else { return nil }
@@ -490,28 +536,26 @@ enum Crossfade {
         let start = {
             guard !started else { return }
             started = true
-            change {
-                // Let the new wallpaper land underneath, then reveal it.
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                    NSAnimationContext.runAnimationGroup({ context in
-                        context.duration = 0.9
-                        context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
-                        stages.forEach { $0.0.animator().alphaValue = 0 }
-                    }, completionHandler: {
-                        MainActor.assumeIsolated { stages.forEach { $0.0.close() } }
-                    })
-                }
+            NSAnimationContext.runAnimationGroup { context in
+                context.duration = 0.6
+                context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                stages.forEach { $0.0.animator().alphaValue = Stage.shownAlpha }
+            }
+            change()
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.6) {
+                stages.forEach { $0.0.close() }
+                Memory.relieve()
             }
         }
         guard !stages.isEmpty else { start(); return }
         for (stage, file) in stages {
-            stage.load(file, into: stage.current, visibleWhenReady: true) {
+            stage.load(file, into: stage.current, visibleWhenReady: false) {
                 waiting -= 1
                 if waiting == 0 { start() }
             }
         }
-        // Don't hold the switch up if an image won't decode.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { start() }
+        // Don't hold up the switch if an image won't decode.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { start() }
     }
 }
 
@@ -526,7 +570,6 @@ enum Desktop {
         // Not over the menu bar or the Dock.
         guard let screen = screenUnderPointer(), NSMouseInRect(mouse, screen.visibleFrame, false) else { return false }
         let point = CGPoint(x: mouse.x, y: primary.frame.maxY - mouse.y)  // window list is top-left based
-        let me = ProcessInfo.processInfo.processIdentifier
         let iconLevel = Int(CGWindowLevelForKey(.desktopIconWindow))
         // The Dock, Screenshot and similar system overlays cover whole screens
         // at this level and above, but let clicks through; app windows sit below.
@@ -534,8 +577,9 @@ enum Desktop {
         guard let windows = CGWindowListCopyWindowInfo([.optionOnScreenOnly], kCGNullWindowID) as? [[String: Any]]
         else { return false }
         for window in windows {  // front to back
-            guard (window[kCGWindowOwnerPID as String] as? pid_t) != me,
-                  (window[kCGWindowAlpha as String] as? Double ?? 1) > 0,
+            // OpenGallery's own windows count too: Settings and the details
+            // card block swipes, while the swipe overlay sits at desktop level.
+            guard (window[kCGWindowAlpha as String] as? Double ?? 1) > 0,
                   let boundsDict = window[kCGWindowBounds as String] as? NSDictionary,
                   let bounds = CGRect(dictionaryRepresentation: boundsDict),
                   bounds.contains(point)
