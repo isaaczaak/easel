@@ -30,17 +30,16 @@
 
 ## Features
 
-- Rotates every 15 minutes, hour, 3 hours or day, and on wake
-- Same artwork everywhere, or different art on each display
-- Filter by kind (paintings, drawings, prints, photographs, sculpture) and by
-  dominant color
-- Hide nudity (on by default), using NGA's tags plus CLIP image analysis
-- Swipe sideways with two fingers on the desktop to change the artwork on
-  that screen
-- Force Click the desktop for the artwork's label: title, artist, date and
-  medium (needs the Input Monitoring permission)
-- Favorites (up to 20), previous/next, launch at login
-- Universal binary (Apple Silicon + Intel), macOS 13+
+- Changes the artwork every 15 minutes, hour, 3 hours or day, and when your
+  Mac wakes
+- Shows the same artwork on every display, or different art on each
+- Filters by kind and by dominant color
+- Hides nudity by default, using NGA's tags plus image analysis
+- Swipe sideways with two fingers on the desktop to change the artwork
+- Force Click the desktop to see the artwork's title, artist, date and medium
+- Keeps up to 20 favorites
+- Switch it off to get your old wallpaper back
+- Runs on Apple Silicon and Intel Macs with macOS 13 or later
 
 ## Install
 
@@ -53,9 +52,13 @@ cd opengallery
 scripts/bundle.sh --install
 ```
 
-This builds OpenGallery, copies it to `/Applications` and launches it. It appears in
-your menu bar and starts at login. Because you built it yourself, macOS opens
-it without a security warning.
+This builds OpenGallery, copies it to `/Applications` and launches it. It
+appears in your menu bar and starts at login. Because you built it yourself,
+macOS opens it without a security warning.
+
+Force Click needs the Input Monitoring permission. OpenGallery asks for it the
+first time; you can also turn it on in System Settings → Privacy & Security →
+Input Monitoring. After an update, you may need to switch it off and on again.
 
 To update, run `git pull` and `scripts/bundle.sh --install` again. To remove
 it, quit OpenGallery from its menu and delete `/Applications/OpenGallery.app`.
@@ -85,10 +88,6 @@ and cached in `~/Library/Caches` (newest 20 kept).
 - `Sources/OpenGallery/` — SwiftUI `MenuBarExtra` app and Settings window
 - `scripts/` — manifest, color analysis, icon and bundling scripts
 - `Resources/` — manifest and icon assets bundled into the app
-
-## Not yet
-
-Developer ID signing and notarization, Sparkle updates, hosted manifest.
 
 ## License
 
