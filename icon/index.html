@@ -27,6 +27,7 @@ const params = new URLSearchParams(location.search);
 const SIZE = 1024;
 
 const BACKGROUNDS = {
+  charcoal: ['#2c2c2e', '#0d0d0e'],
   green:   ['#3d7a5c', '#1c4434'],
   cream:   ['#fbf8f2', '#e6dfd2'],
   navy:    ['#2f4a7a', '#152544'],
@@ -52,7 +53,6 @@ scene.environment = new THREE.PMREMGenerator(renderer).fromScene(new RoomEnviron
 scene.environmentIntensity = 1.25;
 
 const camera = new THREE.PerspectiveCamera(20, 1, 0.1, 100);
-camera.position.set(0, 0, 19.5);
 
 function rect(w, h, r = 0) {
   const s = new THREE.Shape();
@@ -71,69 +71,315 @@ function ring(outerW, outerH, innerW, innerH) {
   return s;
 }
 
-const texture = await new THREE.TextureLoader().loadAsync('/Resources/icon-painting.jpg');
+// Paintings to show, loaded straight from NGA's IIIF server (CORS allowed).
+const PAINTINGS = {
+  monet:     '0b9cefb5-1ee4-401a-8154-8d4039191a28',  // The Japanese Footbridge
+  vangogh:   '51c369a2-cc20-43f6-8262-25877c4377eb',  // Farmhouse in Provence
+  constable: 'c49fa4a0-1e3a-4038-b7dd-ad9036146e73',  // Wivenhoe Park, Essex
+  copley:    'b38ce693-ba56-4953-9c2c-d8139fe4b059',  // Watson and the Shark
+};
+const paintingID = PAINTINGS[params.get('art') ?? 'monet'];
+const texture = await new THREE.TextureLoader().loadAsync(`https://api.nga.gov/iiif/${paintingID}/full/1400,/0/default.jpg`);
 texture.colorSpace = THREE.SRGBColorSpace;
+
+/// Crop the painting to cover a surface of the given aspect, like CSS object-fit: cover.
+function coverTexture(aspect) {
+  const t = texture.clone();
+  const imageAspect = t.image.width / t.image.height;
+  if (imageAspect > aspect) {
+    t.repeat.set(aspect / imageAspect, 1);
+    t.offset.set((1 - t.repeat.x) / 2, 0);
+  } else {
+    t.repeat.set(1, imageAspect / aspect);
+    t.offset.set(0, (1 - t.repeat.y) / 2);
+  }
+  t.needsUpdate = true;
+  return t;
+}
 texture.anisotropy = renderer.capabilities.getMaxAnisotropy();
 
 const art = new THREE.Group();
+const subject = params.get('subject') ?? 'easel';
 
-// Frame moulding: three stepped rings (outer band, raised rounded profile,
-// thin inner lip) so light catches several edges.
-const W = 3.4, border = 0.42, depth = 0.22;
-const frameMaterial = new THREE.MeshPhysicalMaterial(FRAMES[params.get('frame') ?? 'gold']);
-const inner = W - border * 2;
-const steps = [
-  { outer: W,                inner: W - 0.22,           depth: 0.10, bevel: 0.03 },
-  { outer: W - 0.18,         inner: inner + 0.16,       depth: 0.22, bevel: 0.08 },
-  { outer: inner + 0.12,     inner: inner,              depth: 0.16, bevel: 0.02 },
-];
-for (const step of steps) {
-  const mesh = new THREE.Mesh(
-    new THREE.ExtrudeGeometry(ring(step.outer, step.outer, step.inner, step.inner), {
-      depth: step.depth, bevelEnabled: true, bevelThickness: step.bevel, bevelSize: step.bevel,
-      bevelSegments: 8, curveSegments: 4,
+function buildFrame() {
+  // Frame moulding: three stepped rings (outer band, raised rounded profile,
+  // thin inner lip) so light catches several edges.
+  const W = 3.4, border = 0.42, depth = 0.22;
+  const frameMaterial = new THREE.MeshPhysicalMaterial(FRAMES[params.get('frame') ?? 'gold']);
+  const inner = W - border * 2;
+  const steps = [
+    { outer: W,            inner: W - 0.22,     depth: 0.10, bevel: 0.03 },
+    { outer: W - 0.18,     inner: inner + 0.16, depth: 0.22, bevel: 0.08 },
+    { outer: inner + 0.12, inner: inner,        depth: 0.16, bevel: 0.02 },
+  ];
+  for (const step of steps) {
+    art.add(new THREE.Mesh(
+      new THREE.ExtrudeGeometry(ring(step.outer, step.outer, step.inner, step.inner), {
+        depth: step.depth, bevelEnabled: true, bevelThickness: step.bevel, bevelSize: step.bevel,
+        bevelSegments: 8, curveSegments: 4,
+      }),
+      frameMaterial,
+    ));
+  }
+
+  // Mat with a bevel-cut window, painting behind it, and a backing board.
+  const matW = W - border * 2, windowW = matW * 0.66;
+  const mat = new THREE.Mesh(
+    new THREE.ExtrudeGeometry(ring(matW, matW, windowW, windowW), {
+      depth: 0.03, bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.025, bevelSegments: 2,
     }),
-    frameMaterial,
+    new THREE.MeshStandardMaterial({ color: 0xf6f2ea, roughness: 0.92 }),
   );
-  mesh.castShadow = true;
-  mesh.receiveShadow = true;
-  art.add(mesh);
+  mat.position.z = depth * 0.35;
+  art.add(mat);
+  const painting = new THREE.Mesh(
+    new THREE.PlaneGeometry(windowW + 0.06, windowW + 0.06),
+    new THREE.MeshStandardMaterial({ map: coverTexture(1), roughness: 0.7 }),
+  );
+  painting.position.z = depth * 0.35 - 0.01;
+  art.add(painting);
+  const back = new THREE.Mesh(new THREE.PlaneGeometry(W, W), new THREE.MeshStandardMaterial({ color: 0x222222 }));
+  back.position.z = 0.01;
+  art.add(back);
+
+  art.rotation.set(0.08, -0.24, 0);
+  art.position.set(0, 0.15, 0);
+  camera.position.set(0, 0, 19.5);
 }
 
-// Mat with a bevel-cut window.
-const matW = W - border * 2, windowW = matW * 0.66;
-const mat = new THREE.Mesh(
-  new THREE.ExtrudeGeometry(ring(matW, matW, windowW, windowW), {
-    depth: 0.03, bevelEnabled: true, bevelThickness: 0.025, bevelSize: 0.025, bevelSegments: 2,
-  }),
-  new THREE.MeshStandardMaterial({ color: 0xf6f2ea, roughness: 0.92 }),
-);
-mat.position.z = depth * 0.35;
-mat.receiveShadow = true;
-art.add(mat);
+/// Procedural wood grain: warm base with wavy darker lines along the length.
+function woodTexture() {
+  const c = document.createElement('canvas');
+  c.width = 256; c.height = 1024;
+  const g = c.getContext('2d');
+  g.fillStyle = '#9c6234';
+  g.fillRect(0, 0, c.width, c.height);
+  for (let i = 0; i < 110; i++) {
+    const x = Math.random() * c.width, w = 1 + Math.random() * 3;
+    g.strokeStyle = Math.random() < 0.25
+      ? `rgba(214, 160, 105, ${0.2 + Math.random() * 0.3})`
+      : `rgba(${60 + Math.random() * 30}, ${32 + Math.random() * 18}, 15, ${0.25 + Math.random() * 0.35})`;
+    g.lineWidth = w;
+    g.beginPath();
+    for (let y = 0; y <= c.height; y += 16) g.lineTo(x + Math.sin(y / 90 + i) * 6, y);
+    g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
 
-const painting = new THREE.Mesh(
-  new THREE.PlaneGeometry(windowW + 0.06, windowW + 0.06),
-  new THREE.MeshStandardMaterial({ map: texture, roughness: 0.7 }),
-);
-painting.position.z = depth * 0.35 - 0.01;
-painting.receiveShadow = true;
-art.add(painting);
+// Easel finishes: natural wood grain, or one solid satin colour.
+const FINISHES = {
+  natural: null,
+  white:   0xf4f1ea,
+  black:   0x1c1c1e,
+  oak:     0xc89a64,
+};
 
-// Backing so no gaps show through at an angle.
-const back = new THREE.Mesh(new THREE.PlaneGeometry(W, W), new THREE.MeshStandardMaterial({ color: 0x222222 }));
-back.position.z = 0.01;
-art.add(back);
+function buildEasel() {
+  const finish = params.get('finish') ?? 'natural';
+  const grain = FINISHES[finish] == null ? woodTexture() : null;
+  const material = map => new THREE.MeshPhysicalMaterial({
+    map, color: grain ? 0xffffff : FINISHES[finish],
+    roughness: grain ? 0.5 : 0.42, clearcoat: 0.4, clearcoatRoughness: 0.35,
+  });
+  const wood = material(grain);
+  // Planks run sideways, so their grain is rotated to follow the length.
+  let plankGrain = null;
+  if (grain) {
+    plankGrain = grain.clone();
+    plankGrain.wrapS = plankGrain.wrapT = THREE.RepeatWrapping;
+    plankGrain.center.set(0.5, 0.5);
+    plankGrain.rotation = Math.PI / 2;
+    plankGrain.repeat.set(0.35, 0.35);
+    plankGrain.needsUpdate = true;
+  }
+  const plankWood = material(plankGrain);
 
-art.rotation.set(0.08, -0.24, 0.0);
-art.position.set(0, 0.15, 0);
+  /// A rounded dowel between two points.
+  function dowel(from, to, radius) {
+    const a = new THREE.Vector3(...from), b = new THREE.Vector3(...to);
+    const length = a.distanceTo(b);
+    const mesh = new THREE.Mesh(new THREE.CapsuleGeometry(radius, length - radius * 2, 6, 16), wood);
+    mesh.position.copy(a).add(b).multiplyScalar(0.5);
+    mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+    art.add(mesh);
+  }
+
+  /// A rounded plank centred at `position`, tilted back like the easel.
+  function plank(size, position, tilt) {
+    const [w, h, d] = size;
+    const mesh = new THREE.Mesh(
+      new THREE.ExtrudeGeometry(rect(w, h, Math.min(w, h) * 0.3), {
+        depth: d, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.02, bevelSegments: 3,
+      }),
+      plankWood,
+    );
+    mesh.geometry.translate(0, 0, -d / 2);
+    mesh.position.set(...position);
+    mesh.rotation.x = tilt;
+    art.add(mesh);
+    return mesh;
+  }
+
+  const top = [0, 2.2, -0.3], footZ = 0.35, footY = -2.05;
+  const legR = 0.075;
+  dowel([-1.05, footY, footZ], [-0.1, top[1], top[2]], legR);
+  dowel([1.05, footY, footZ], [0.1, top[1], top[2]], legR);
+  dowel([0, footY, -1.45], [0, top[1] - 0.15, top[2] - 0.08], legR * 0.9);
+
+  // Front legs lean back; everything resting on them shares that tilt.
+  const slope = (top[2] - footZ) / (top[1] - footY);
+  const tilt = Math.atan(slope);
+  const zAt = y => footZ + (y - footY) * slope;
+
+  const ledgeY = -0.55;
+  plank([2.9, 0.12, 0.34], [0, ledgeY, zAt(ledgeY) + 0.12], tilt);
+  dowel([-0.78, -1.45, zAt(-1.45) + 0.02], [0.78, -1.45, zAt(-1.45) + 0.02], 0.045);
+
+  // Canvas on stretcher bars: painted front, linen edges.
+  const cw = 2.5, ch = 1.95, cd = 0.1;
+  const canvasY = ledgeY + 0.06 + ch / 2;
+  const linen = new THREE.MeshStandardMaterial({ color: 0xe9e2d2, roughness: 0.95 });
+  // canvas=art (painting), blank (primed linen) or none (empty easel).
+  const canvasMode = params.get('canvas') ?? 'art';
+  if (canvasMode !== 'none') {
+    const front = canvasMode === 'art'
+      ? new THREE.MeshStandardMaterial({ map: coverTexture(cw / ch), roughness: 0.75 })
+      : new THREE.MeshStandardMaterial({ color: 0xfbf9f4, roughness: 0.9 });
+    const canvas = new THREE.Mesh(new THREE.BoxGeometry(cw, ch, cd), [linen, linen, linen, linen, front, linen]);
+    canvas.position.set(0, canvasY, zAt(canvasY) + 0.2);
+    canvas.rotation.x = tilt;
+    art.add(canvas);
+  }
+
+  // Top clamp: holds the canvas, or sits on the mast of an empty easel.
+  const clampY = canvasMode === 'none' ? 1.25 : canvasY + ch / 2 + 0.06;
+  plank([0.5, 0.16, 0.22], [0, clampY, zAt(clampY) + (canvasMode === 'none' ? 0.02 : 0.16)], tilt);
+
+  art.rotation.set(0.04, -0.42, 0);
+  art.position.set(0, -0.05, 0);
+  camera.position.set(0, 0.1, 18.5);
+}
+
+/// The Rotation mark in 3D: a ceramic ring, nearly closed, turning around a
+/// lacquered landscape canvas. A sphere marks the leading end of the arc.
+function buildRotation() {
+  const R = 2.0, tube = 0.24, gap = 0.95;               // radians of open arc
+  const arcLength = Math.PI * 2 - gap;
+  const gapCentre = THREE.MathUtils.degToRad(102);     // just left of top
+  const startAngle = gapCentre + gap / 2;               // leading end, left of the gap
+
+  const RINGS = { ceramic: 0xe9e4da, gold: 0xd4a24c };
+  const ringKind = params.get('ring') ?? 'ceramic';
+  const ceramic = new THREE.MeshPhysicalMaterial({
+    color: RINGS[ringKind], roughness: ringKind === 'gold' ? 0.22 : 0.42,
+    metalness: ringKind === 'gold' ? 1 : 0, clearcoat: 1, clearcoatRoughness: 0.2,
+  });
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(R, tube, 48, 220, arcLength), ceramic);
+  ring.rotation.z = startAngle;
+  art.add(ring);
+  const at = a => new THREE.Vector3(R * Math.cos(a), R * Math.sin(a), 0);
+  const cap = new THREE.Mesh(new THREE.SphereGeometry(tube, 48, 32), ceramic);
+  cap.position.copy(at(startAngle + arcLength));        // trailing end: rounded off
+  art.add(cap);
+  const dot = new THREE.Mesh(new THREE.SphereGeometry(tube * 1.45, 64, 48), ceramic);
+  dot.position.copy(at(startAngle));                    // leading end: the dot
+  art.add(dot);
+
+  // Canvas: a beveled slab, lacquered orange or showing a painting.
+  const cw = 2.0, ch = 1.32, depth = 0.26;
+  const face = params.get('face') ?? 'orange';
+  const lacquer = new THREE.MeshPhysicalMaterial({
+    color: 0xc2401c, roughness: 0.38, clearcoat: 1, clearcoatRoughness: 0.12, envMapIntensity: 0.6,
+  });
+  const slab = new THREE.Mesh(
+    new THREE.ExtrudeGeometry(rect(cw, ch, 0.16), {
+      depth, bevelEnabled: true, bevelThickness: 0.07, bevelSize: 0.07, bevelSegments: 8, curveSegments: 12,
+    }),
+    lacquer,
+  );
+  slab.position.z = -depth / 2;
+  art.add(slab);
+  if (face === 'art') {
+    const painting = new THREE.Mesh(
+      new THREE.PlaneGeometry(cw - 0.06, ch - 0.06),
+      new THREE.MeshStandardMaterial({ map: coverTexture((cw - 0.06) / (ch - 0.06)), roughness: 0.6 }),
+    );
+    painting.position.z = depth / 2 + 0.071;
+    art.add(painting);
+  }
+
+  art.rotation.set(-0.22, 0.32, 0);
+  art.position.set(0, 0.12, 0);
+  camera.position.set(0, 0, 24.5);
+}
+
+/// Dia's dome cut like Obsidian's gem: a wide, low hemisphere with flat facets.
+/// face=art wraps a painting's brushwork over it; face=gradient shades the
+/// facets from deep to light by height; face=solid is one colour.
+function buildDome() {
+  const R = 2.3, widthSegments = 7, heightSegments = 3;
+  const geometry = new THREE.SphereGeometry(R, widthSegments, heightSegments, 0, Math.PI * 2, 0, Math.PI / 2);
+  geometry.scale(1, 0.82, 1);                            // wider than tall, like Dia
+  // Nudge the upper vertices so the facets are irregular, like a cut gem.
+  // The offset is a hash of the position, so seam duplicates move together.
+  {
+    const position = geometry.attributes.position;
+    const hash = (x, y, z) => { const h = Math.sin(x * 12.99 + y * 78.23 + z * 37.72) * 43758.55; return h - Math.floor(h); };
+    for (let i = 0; i < position.count; i++) {
+      const x = position.getX(i), y = position.getY(i), z = position.getZ(i);
+      if (y < 0.01) continue;                            // keep the base flat
+      const k = 0.16;
+      position.setXYZ(i, x + (hash(x, y, z) - 0.5) * k, y + (hash(z, x, y) - 0.5) * k, z + (hash(y, z, x) - 0.5) * k);
+    }
+  }
+  const face = params.get('face') ?? 'gradient';
+  const PALETTES = {
+    sunset:  [0xc2401c, 0xf2b84b],
+    meadow:  [0x2f6b4f, 0xc9d98a],
+    dusk:    [0x2b2f6b, 0x9a7fd1],
+    gold:    [0x9c6b22, 0xf3d27a],
+  };
+  let material;
+  if (face === 'art') {
+    material = new THREE.MeshPhysicalMaterial({ map: texture, roughness: 0.5, clearcoat: 0.6, flatShading: true });
+  } else if (face === 'gradient') {
+    const [low, high] = (PALETTES[params.get('palette') ?? 'sunset']).map(c => new THREE.Color(c));
+    const position = geometry.attributes.position, colors = [];
+    const top = R * 0.78;
+    for (let i = 0; i < position.count; i++) {
+      const t = Math.pow(position.getY(i) / top, 0.8);
+      const c = low.clone().lerp(high, t);
+      colors.push(c.r, c.g, c.b);
+    }
+    geometry.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+    material = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.32, clearcoat: 1, clearcoatRoughness: 0.15, flatShading: true });
+  } else {
+    material = new THREE.MeshPhysicalMaterial({ color: 0xf0bf3a, roughness: 0.4, clearcoat: 0.8, flatShading: true });
+  }
+  const dome = new THREE.Mesh(geometry.toNonIndexed(), material);
+  dome.geometry.computeVertexNormals();
+  art.add(dome);
+  // Base: a flat disc so the dome sits on something when tilted.
+  const base = new THREE.Mesh(new THREE.CircleGeometry(R, widthSegments), material);
+  base.rotation.x = Math.PI / 2;
+  art.add(base);
+
+  art.rotation.set(0.1, 0.42, 0);
+  art.position.set(0, -0.95, 0);
+  camera.position.set(0, 0, 17.5);
+  scene.environmentIntensity = 0.55;                     // keep colours rich, not washed out
+}
+
+if (subject === 'frame') buildFrame();
+else if (subject === 'dome') buildDome();
+else if (subject === 'rotation') buildRotation();
+else buildEasel();
+art.traverse(o => { if (o.isMesh) { o.castShadow = true; o.receiveShadow = true; } });
 scene.add(art);
-
-// Invisible wall that only catches the frame's shadow.
-const wall = new THREE.Mesh(new THREE.PlaneGeometry(30, 30), new THREE.ShadowMaterial({ opacity: 0.30 }));
-wall.position.z = -0.9;
-wall.receiveShadow = true;
-// scene.add(wall);  shadow is drawn from the render's silhouette instead
 
 const key = new THREE.DirectionalLight(0xfff4e6, 2.6);
 key.position.set(-4, 6, 8);
