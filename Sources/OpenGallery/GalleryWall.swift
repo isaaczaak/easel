@@ -7,6 +7,21 @@ import UniformTypeIdentifiers
 /// fill a wide screen, so they're shown whole, hung on a warm plaster wall
 /// like the app icon. This renders that as one screen-sized image.
 enum GalleryWall {
+    /// Renders run one at a time: each needs a screen-sized canvas, and
+    /// several at once spike memory for no visible gain.
+    private actor Renderer {
+        func render(_ source: URL, size: CGSize, to destination: URL) throws {
+            // Its own pool, like Stage.decode: this runs on a background thread.
+            try autoreleasepool { try GalleryWall.render(source, size: size, to: destination) }
+            Memory.relieve()
+        }
+    }
+    private static let renderer = Renderer()
+
+    static func renderInTurn(_ source: URL, size: CGSize, to destination: URL) async throws {
+        try await renderer.render(source, size: size, to: destination)
+    }
+
     /// How much of the screen's height the artwork takes up.
     static let heightShare: CGFloat = 0.78
 

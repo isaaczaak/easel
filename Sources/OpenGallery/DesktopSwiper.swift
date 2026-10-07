@@ -32,8 +32,9 @@ final class DesktopSwiper {
     private var screenIndex = 0
 
     /// Images decoded as soon as fingers land, so a swipe shows from its
-    /// first frame. Held only during a gesture, then released.
-    private var ready: [URL: CGImage] = [:]
+    /// first frame; one decode per file, shared by whoever needs it. Held
+    /// only during a gesture, then released.
+    private var decodes: [URL: Task<CGImage?, Never>] = [:]
     private var readying: Task<Void, Never>?
 
     /// A two-finger scroll that started over the desktop but hasn't yet
@@ -156,12 +157,14 @@ final class DesktopSwiper {
     private func commit(forward: Bool) {
         phase = .settling
         changeLanded = false
-        layoutStages(fraction: forward ? -1 : 1, animated: true)
+        slideWhenReady(to: forward ? -1 : 1, forward: forward)
         let stages = stages
         let done: () -> Void = { [weak self] in
             self?.changeLanded = true
-            // Let the real wallpaper settle underneath before revealing it.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { self?.hideStages(stages) }
+            // macOS takes up to about two seconds to show a new wallpaper; keep
+            // the slide's last frame up until then, so the old artwork never
+            // shows through. A new swipe can still start meanwhile.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.0) { self?.hideStages(stages) }
         }
         // Start the change straight away; the slide covers the download.
         if forward {
@@ -169,6 +172,19 @@ final class DesktopSwiper {
         } else {
             controller.previous(screen: screenIndex, then: done)
         }
+    }
+
+    /// Slides once the incoming artwork is decoded (waiting up to 0.6 s),
+    /// so a quick release never slides in an empty panel.
+    private func slideWhenReady(to fraction: CGFloat, forward: Bool, waited: TimeInterval = 0) {
+        let ready = stages.allSatisfy { (forward ? $0.next : $0.previous).contents != nil }
+        guard ready || waited >= 0.6 else {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.016) { [weak self] in
+                self?.slideWhenReady(to: fraction, forward: forward, waited: waited + 0.016)
+            }
+            return
+        }
+        layoutStages(fraction: fraction, animated: true)
     }
 
     private func cancel() {
@@ -184,7 +200,17 @@ final class DesktopSwiper {
     // MARK: - Stages
 
     private func showStages() {
-        removeStages()
+        // The previous swipe's overlay may still be covering a wallpaper
+        // macOS hasn't finished switching; close it only once the new one
+        // is showing, so nothing behind it flashes through.
+        let previous = stages
+        var waiting = 0
+        let closePrevious = { [weak self] in
+            waiting -= 1
+            guard waiting <= 0 else { return }
+            previous.forEach { $0.close() }
+            self?.stages.removeAll { previous.contains($0) }
+        }
         let screens = NSScreen.screens
         let current = controller.currentFiles
         // Each display has its own art in per-display mode, so only the
@@ -192,9 +218,11 @@ final class DesktopSwiper {
         let moving = controller.perDisplay ? [screenIndex] : Array(screens.indices)
         stages = moving.filter { current.indices.contains($0) && screens.indices.contains($0) }.map { index in
             let stage = Stage(screen: screens[index], index: index)
-            stage.load(current[index], into: stage.current, visibleWhenReady: true, ready: ready[current[index]])
+            waiting += 1
+            loadOnce(current[index], into: stage, layer: stage.current, visibleWhenReady: true, then: closePrevious)
             return stage
         }
+        if waiting == 0 { closePrevious() }
         let newStages = stages
         let screen = screenIndex
         for forward in [true, false] where forward || canGoBack {
@@ -202,8 +230,8 @@ final class DesktopSwiper {
                 guard let files = await self?.controller.neighborFiles(forward: forward, screen: screen) else { return }
                 for stage in newStages where files.indices.contains(stage.index) {
                     guard let file = files[stage.index] else { continue }
-                    stage.load(file, into: forward ? stage.next : stage.previous, visibleWhenReady: false,
-                               ready: self?.ready[file])
+                    self?.loadOnce(file, into: stage, layer: forward ? stage.next : stage.previous,
+                                   visibleWhenReady: false)
                 }
             }
         }
@@ -219,7 +247,7 @@ final class DesktopSwiper {
     private func hideStages(_ stages: [Stage]) {
         let stages = stages.filter { self.stages.contains($0) }  // not already replaced by a newer swipe
         NSAnimationContext.runAnimationGroup({ context in
-            context.duration = 0.25
+            context.duration = 0.4
             stages.forEach { $0.animator().alphaValue = 0 }
         }, completionHandler: { [weak self] in
             Task { @MainActor in self?.closeStages(stages) }
@@ -237,16 +265,24 @@ final class DesktopSwiper {
         }
     }
 
+    /// Shows `file` on `stage` with the shared decode, so the same image is
+    /// never decoded twice.
+    private func loadOnce(_ file: URL, into stage: Stage, layer: CALayer, visibleWhenReady: Bool,
+                          then: (() -> Void)? = nil) {
+        let decoding = decode(file, size: stage.pixelSize, space: stage.screenSpace)
+        Task {
+            let image = await decoding.value
+            stage.load(file, into: layer, visibleWhenReady: visibleWhenReady, ready: image, then: then)
+        }
+    }
+
     private func releaseReady() {
         readying?.cancel()
         readying = nil
-        ready = [:]
+        decodes = [:]
+        Memory.relieve()
     }
 
-    private func removeStages() {
-        stages.forEach { $0.close() }
-        stages = []
-    }
 
     /// Fingers just landed on the desktop: decode the images a swipe would
     /// show, so it can start on its first frame.
@@ -255,24 +291,30 @@ final class DesktopSwiper {
         guard let pointer = Desktop.screenUnderPointer(), let screen = screens.firstIndex(of: pointer) else { return }
         let moving = controller.perDisplay ? [screen] : Array(screens.indices)
         let current = controller.currentFiles
+        for i in moving where current.indices.contains(i) {
+            _ = decode(current[i], size: screens[i].pixelSize, space: Stage.colorSpace(of: screens[i]))
+        }
         readying?.cancel()
         readying = Task { [weak self] in
-            guard let self else { return }
-            var files: [(URL, CGSize)] = moving.compactMap { i in
-                current.indices.contains(i) ? (current[i], screens[i].pixelSize) : nil
-            }
             for forward in [true, false] {
-                guard let neighbors = await self.controller.neighborFiles(forward: forward, screen: screen) else { continue }
-                files += moving.compactMap { i in
-                    neighbors.indices.contains(i) ? neighbors[i].map { ($0, screens[i].pixelSize) } : nil
+                guard let neighbors = await self?.controller.neighborFiles(forward: forward, screen: screen),
+                      !Task.isCancelled
+                else { continue }
+                for i in moving where neighbors.indices.contains(i) {
+                    if let file = neighbors[i] {
+                        _ = self?.decode(file, size: screens[i].pixelSize, space: Stage.colorSpace(of: screens[i]))
+                    }
                 }
             }
-            for (file, size) in files where self.ready[file] == nil {
-                let image = await Task.detached(priority: .userInitiated) { Stage.decode(file, covering: size) }.value
-                if Task.isCancelled { return }
-                self.ready[file] = image
-            }
         }
+    }
+
+    /// The decode of `file`, started if it isn't already running.
+    private func decode(_ file: URL, size: CGSize, space: CGColorSpace) -> Task<CGImage?, Never> {
+        if let running = decodes[file] { return running }
+        let task = Task.detached(priority: .userInitiated) { Stage.decode(file, covering: size, in: space) }
+        decodes[file] = task
+        return task
     }
 }
 
@@ -286,7 +328,12 @@ private final class Stage: NSWindow {
     let current = CALayer()
     let next = CALayer()
     private let strip = CALayer()
-    private let pixelSize: CGSize
+    let pixelSize: CGSize
+    let screenSpace: CGColorSpace
+    /// Never fully opaque: if the desktop is completely covered, macOS pauses
+    /// the wallpaper, and uncovering it shows black until it restarts. 1%
+    /// see-through is invisible.
+    static let shownAlpha: CGFloat = 0.99
     /// The screen's place in `NSScreen.screens`.
     let index: Int
     /// Space between neighbouring artworks while they slide.
@@ -295,17 +342,23 @@ private final class Stage: NSWindow {
     init(screen: NSScreen, index: Int) {
         self.index = index
         pixelSize = screen.pixelSize
+        screenSpace = Self.colorSpace(of: screen)
         super.init(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
         level = NSWindow.Level(Int(CGWindowLevelForKey(.desktopWindow)) + 1)
         collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         ignoresMouseEvents = true
         isReleasedWhenClosed = false
         hasShadow = false
+        // Not opaque, so macOS keeps drawing the desktop underneath: it stops
+        // rendering a fully covered wallpaper, and uncovering it would show
+        // black (or the old artwork) until it caught up.
+        isOpaque = false
+        backgroundColor = .clear
         alphaValue = 0  // until the current artwork is decoded, so it never flashes black
 
         let view = NSView(frame: NSRect(origin: .zero, size: screen.frame.size))
         view.wantsLayer = true
-        view.layer?.backgroundColor = NSColor.black.cgColor
+        view.layer?.backgroundColor = NSColor.clear.cgColor
         contentView = view
 
         let size = screen.frame.size
@@ -323,6 +376,21 @@ private final class Stage: NSWindow {
         view.layer?.addSublayer(strip)
         setFrame(screen.frame, display: false)
         orderFrontRegardless()
+    }
+
+    /// Drops the images before closing: Core Animation can keep a closed
+    /// window's layers, and their pixels, alive long after.
+    override func close() {
+        orderOut(nil)  // off screen first, or the black backing shows for a frame
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        for layer in [previous, current, next] {
+            layer.removeAllAnimations()
+            layer.contents = nil
+        }
+        strip.removeAllAnimations()
+        CATransaction.commit()
+        super.close()
     }
 
     /// Moves the strip so `fraction` of a screen width has slid past; -1
@@ -348,41 +416,57 @@ private final class Stage: NSWindow {
             CATransaction.setDisableActions(true)
             layer.contents = ready
             CATransaction.commit()
-            if visibleWhenReady { alphaValue = 1 }
+            if visibleWhenReady { alphaValue = Self.shownAlpha }
             then?()
             return
         }
-        let size = pixelSize
+        let size = pixelSize, space = screenSpace
         Task.detached(priority: .userInitiated) {
-            let image = Self.decode(file, covering: size)
+            let image = Self.decode(file, covering: size, in: space)
             await MainActor.run {
                 CATransaction.begin()
                 CATransaction.setDisableActions(true)
                 layer.contents = image
                 CATransaction.commit()
-                if visibleWhenReady { self.alphaValue = 1 }
+                if visibleWhenReady { self.alphaValue = Self.shownAlpha }
                 then?()
             }
         }
     }
 
-    /// The image scaled down just enough to still fill `size` when cropped.
-    nonisolated static func decode(_ file: URL, covering size: CGSize) -> CGImage? {
-        guard let source = CGImageSourceCreateWithURL(file as CFURL, nil),
-              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-              let width = props[kCGImagePropertyPixelWidth] as? CGFloat,
-              let height = props[kCGImagePropertyPixelHeight] as? CGFloat,
-              width > 0, height > 0
-        else { return nil }
-        let fill = max(size.width / width, size.height / height)
-        let longest = max(width, height) * min(fill, 1)
-        let options: [CFString: Any] = [
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceThumbnailMaxPixelSize: Int(longest.rounded(.up)),
-            kCGImageSourceCreateThumbnailWithTransform: true,
-            kCGImageSourceShouldCacheImmediately: true,
-        ]
-        return CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+    static func colorSpace(of screen: NSScreen) -> CGColorSpace {
+        screen.colorSpace?.cgColorSpace ?? CGColorSpace(name: CGColorSpace.sRGB)!
+    }
+
+    /// The image scaled down just enough to still fill `size` when cropped,
+    /// drawn into the screen's own color space. Paintings carry their own
+    /// color profiles; left as they are, Core Graphics converts them for
+    /// display and keeps every converted copy in a cache that only empties
+    /// under memory pressure.
+    nonisolated static func decode(_ file: URL, covering size: CGSize, in space: CGColorSpace) -> CGImage? {
+        autoreleasepool {
+            let noCache = [kCGImageSourceShouldCache: false] as CFDictionary
+            guard let source = CGImageSourceCreateWithURL(file as CFURL, noCache),
+                  let props = CGImageSourceCopyPropertiesAtIndex(source, 0, noCache) as? [CFString: Any],
+                  let width = props[kCGImagePropertyPixelWidth] as? CGFloat,
+                  let height = props[kCGImagePropertyPixelHeight] as? CGFloat,
+                  width > 0, height > 0
+            else { return nil }
+            let fill = min(max(size.width / width, size.height / height), 1)
+            let options: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceThumbnailMaxPixelSize: Int((max(width, height) * fill).rounded(.up)),
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceShouldCache: false,
+            ]
+            guard let decoded = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary),
+                  let ctx = CGContext(data: nil, width: decoded.width, height: decoded.height, bitsPerComponent: 8,
+                                      bytesPerRow: 0, space: space,
+                                      bitmapInfo: CGImageAlphaInfo.noneSkipFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+            else { return nil }
+            ctx.draw(decoded, in: CGRect(x: 0, y: 0, width: decoded.width, height: decoded.height))
+            return ctx.makeImage()
+        }
     }
 }
 
@@ -414,7 +498,7 @@ enum Crossfade {
                         context.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
                         stages.forEach { $0.0.animator().alphaValue = 0 }
                     }, completionHandler: {
-                        stages.forEach { $0.0.close() }
+                        MainActor.assumeIsolated { stages.forEach { $0.0.close() } }
                     })
                 }
             }

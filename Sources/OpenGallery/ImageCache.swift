@@ -42,7 +42,7 @@ final class ImageCache {
         }
         try? FileManager.default.removeItem(at: local)
         if hung {
-            try GalleryWall.render(temp, size: pixelSize, to: local)
+            try await GalleryWall.renderInTurn(temp, size: pixelSize, to: local)
         } else {
             try FileManager.default.moveItem(at: temp, to: local)
         }

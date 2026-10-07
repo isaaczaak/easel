@@ -580,6 +580,7 @@ final class WallpaperController: ObservableObject {
             let cache = cache, fetch = added
             Task {  // in order, so the next one is ready first
                 for artwork in fetch { _ = try? await cache.file(for: artwork, covering: size) }
+                Memory.relieve()
             }
         }
     }
