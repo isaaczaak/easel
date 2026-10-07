@@ -48,8 +48,8 @@ Requires macOS 13 or later and Apple's command line tools
 (`xcode-select --install`, which includes Swift).
 
 ```bash
-git clone https://github.com/isaaczaak/easel.git
-cd easel
+git clone https://github.com/isaaczaak/opengallery.git
+cd opengallery
 scripts/bundle.sh --install
 ```
 
