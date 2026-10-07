@@ -24,22 +24,28 @@
   <sub>
     <em>Wivenhoe Park, Essex</em>, John Constable, 1816 ·
     <em>Farmhouse in Provence</em>, Vincent van Gogh, 1888 ·
-    <em>Watson and the Shark</em>, John Singleton Copley, 1778
+    <em>The Bridge at Argenteuil</em>, Claude Monet, 1874
   </sub>
 </p>
 
 ## Features
 
-- Changes the artwork every 15 minutes, hour, 3 hours or day, and when your
-  Mac wakes
-- Shows the same artwork on every display, or different art on each
-- Filters by kind and by dominant color
-- Hides nudity by default, using NGA's tags plus image analysis
-- Swipe sideways with two fingers on the desktop to change the artwork
-- Force Click the desktop to see the artwork's title, artist, date and medium
-- Keeps up to 20 favorites
-- Switch it off to get your old wallpaper back
-- Runs on Apple Silicon and Intel Macs with macOS 13 or later
+**Rotation:** Changes the artwork every hour by default. Change it to every
+15 minutes, 3 hours or day, and show the same artwork on every display or
+different art on each.
+
+**Filters:** Choose by type, art movement and palette. Nudity is hidden by
+default, using the Gallery's own tags plus image analysis.
+
+**Desktop gestures:** Swipe sideways with two fingers to see the next or
+previous artwork. Force Click to open the artwork's details.
+
+**Favorites:** Keep up to 20, and show only those if you like.
+
+**On/off:** Switch OpenGallery off from its menu to get your old wallpaper
+back.
+
+Runs on Apple Silicon and Intel Macs with macOS 13 or later.
 
 ## Install
 
